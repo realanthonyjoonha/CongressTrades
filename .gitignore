@@ -1,0 +1,24 @@
+# Outputs
+outputs/logs/
+outputs/reports/
+outputs/tmp/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Secrets (if user moves API keys to env)
+.env
+.env.local

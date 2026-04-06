@@ -1,0 +1,144 @@
+{
+  "finnhub_api_key": "d79s2l1r01qspme5uln0d79s2l1r01qspme5ulng",
+  "lookback_days": 30,
+  "min_trade_value_usd": 50000,
+
+  "tracked_politicians": {
+    "tier_1_top_performers": [
+      {
+        "name": "Nancy Pelosi",
+        "chamber": "House",
+        "party": "D",
+        "state": "CA",
+        "notes": "Husband Paul Pelosi trades. Historically strong tech/semiconductor timing. NVDA, AAPL, GOOGL, CRM, RBLX calls ahead of legislation.",
+        "committees": ["Appropriations (former Speaker)"]
+      },
+      {
+        "name": "Dan Crenshaw",
+        "chamber": "House",
+        "party": "R",
+        "state": "TX",
+        "notes": "Energy and defense focus. Trades align with committee knowledge. Consistent outperformance.",
+        "committees": ["Energy and Commerce"]
+      },
+      {
+        "name": "Tommy Tuberville",
+        "chamber": "Senate",
+        "party": "R",
+        "state": "AL",
+        "notes": "High volume trader. Defense and finance sector lean. Armed Services Committee member.",
+        "committees": ["Armed Services", "Agriculture"]
+      },
+      {
+        "name": "Mark Green",
+        "chamber": "House",
+        "party": "R",
+        "state": "TN",
+        "notes": "Homeland Security Committee chair. Defense and cyber trades.",
+        "committees": ["Homeland Security"]
+      },
+      {
+        "name": "Josh Gottheimer",
+        "chamber": "House",
+        "party": "D",
+        "state": "NJ",
+        "notes": "High volume, finance sector focus. Financial Services Committee.",
+        "committees": ["Financial Services"]
+      }
+    ],
+    "tier_2_active_traders": [
+      {
+        "name": "Gil Cisneros",
+        "chamber": "House",
+        "party": "D",
+        "state": "CA",
+        "notes": "Former lottery winner turned congressman. Active trader with large position sizes. Armed Services Committee.",
+        "committees": ["Armed Services", "Veterans' Affairs"]
+      },
+      {
+        "name": "Marjorie Taylor Greene",
+        "chamber": "House",
+        "party": "R",
+        "state": "GA",
+        "notes": "Active trader, defense and tech positions.",
+        "committees": ["Homeland Security", "Oversight"]
+      },
+      {
+        "name": "Michael McCaul",
+        "chamber": "House",
+        "party": "R",
+        "state": "TX",
+        "notes": "Foreign Affairs Committee chair. Defense and semiconductor trades.",
+        "committees": ["Foreign Affairs", "Homeland Security"]
+      },
+      {
+        "name": "Ro Khanna",
+        "chamber": "House",
+        "party": "D",
+        "state": "CA",
+        "notes": "Tech sector trades, Silicon Valley representative.",
+        "committees": ["Armed Services", "Oversight"]
+      },
+      {
+        "name": "Dave Joyce",
+        "chamber": "House",
+        "party": "R",
+        "state": "OH",
+        "notes": "Appropriations Committee, diverse trading activity.",
+        "committees": ["Appropriations"]
+      }
+    ],
+    "tier_3_watchlist": [
+      {
+        "name": "Austin Scott",
+        "chamber": "House",
+        "party": "R",
+        "state": "GA",
+        "notes": "Armed Services Committee, agriculture and defense.",
+        "committees": ["Armed Services", "Agriculture"]
+      },
+      {
+        "name": "Pat Fallon",
+        "chamber": "House",
+        "party": "R",
+        "state": "TX",
+        "notes": "Armed Services Committee, frequent trader.",
+        "committees": ["Armed Services", "Oversight"]
+      },
+      {
+        "name": "Shelley Moore Capito",
+        "chamber": "Senate",
+        "party": "R",
+        "state": "WV",
+        "notes": "Energy and natural resources.",
+        "committees": ["Commerce", "Environment and Public Works", "Appropriations"]
+      }
+    ]
+  },
+
+  "sectors": {
+    "description": "Sectors to categorize trades into for clustering analysis.",
+    "list": [
+      "Technology & AI",
+      "Semiconductors",
+      "Defense & Aerospace",
+      "Energy & Utilities",
+      "Healthcare & Pharma",
+      "Finance & Banking",
+      "Industrials & Infrastructure",
+      "Cybersecurity",
+      "Real Estate",
+      "Consumer & Retail",
+      "Other"
+    ]
+  },
+
+  "notable_trade_filters": {
+    "min_transaction_value_usd": 50000,
+    "focus_on_purchases": true,
+    "flag_options_trades": true,
+    "flag_pre_legislation_timing": true,
+    "flag_committee_alignment": true,
+    "flag_sector_clustering": true
+  }
+}
