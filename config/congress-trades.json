@@ -10,40 +10,45 @@
         "chamber": "House",
         "party": "D",
         "state": "CA",
-        "notes": "Husband Paul Pelosi trades. Historically strong tech/semiconductor timing. NVDA, AAPL, GOOGL, CRM, RBLX calls ahead of legislation.",
-        "committees": ["Appropriations (former Speaker)"]
+        "notes": "Husband Paul Pelosi trades. Historically strong tech/semiconductor timing. NVDA, AAPL, GOOGL, CRM, RBLX calls ahead of legislation. Most-watched congressional trader.",
+        "committees": ["Appropriations (former Speaker)"],
+        "disclosure_activity": "Active — multiple trades per month"
       },
       {
-        "name": "Dan Crenshaw",
+        "name": "Ro Khanna",
         "chamber": "House",
-        "party": "R",
-        "state": "TX",
-        "notes": "Energy and defense focus. Trades align with committee knowledge. Consistent outperformance.",
-        "committees": ["Energy and Commerce"]
-      },
-      {
-        "name": "Tommy Tuberville",
-        "chamber": "Senate",
-        "party": "R",
-        "state": "AL",
-        "notes": "High volume trader. Defense and finance sector lean. Armed Services Committee member.",
-        "committees": ["Armed Services", "Agriculture"]
-      },
-      {
-        "name": "Mark Green",
-        "chamber": "House",
-        "party": "R",
-        "state": "TN",
-        "notes": "Homeland Security Committee chair. Defense and cyber trades.",
-        "committees": ["Homeland Security"]
+        "party": "D",
+        "state": "CA",
+        "notes": "MOST ACTIVE TRADER IN CONGRESS — 4,081 trades in 2025. Silicon Valley representative, tech sector focus. Discloses constantly.",
+        "committees": ["Armed Services", "Oversight"],
+        "disclosure_activity": "Extremely active — daily disclosures"
       },
       {
         "name": "Josh Gottheimer",
         "chamber": "House",
         "party": "D",
         "state": "NJ",
-        "notes": "High volume, finance sector focus. Financial Services Committee.",
-        "committees": ["Financial Services"]
+        "notes": "$44M in disclosed trades in 2025. Financial Services Committee. High volume, finance sector focus.",
+        "committees": ["Financial Services"],
+        "disclosure_activity": "Very active — hundreds of trades per year"
+      },
+      {
+        "name": "Michael McCaul",
+        "chamber": "House",
+        "party": "R",
+        "state": "TX",
+        "notes": "$75M+ in disclosed trades in 2025. Foreign Affairs Committee chair. Defense and semiconductor trades.",
+        "committees": ["Foreign Affairs", "Homeland Security"],
+        "disclosure_activity": "Very active — high volume"
+      },
+      {
+        "name": "Warren Davidson",
+        "chamber": "House",
+        "party": "R",
+        "state": "OH",
+        "notes": "Top-performing congressional trader of 2025 with 78.8% returns. Financial Services Committee.",
+        "committees": ["Financial Services"],
+        "disclosure_activity": "Active — best returns of any congressional trader"
       }
     ],
     "tier_2_active_traders": [
@@ -52,32 +57,83 @@
         "chamber": "House",
         "party": "D",
         "state": "CA",
-        "notes": "Former lottery winner turned congressman. Active trader with large position sizes. Armed Services Committee.",
-        "committees": ["Armed Services", "Veterans' Affairs"]
+        "notes": "Former lottery winner. Active trader with large position sizes. Armed Services Committee.",
+        "committees": ["Armed Services", "Veterans' Affairs"],
+        "disclosure_activity": "Active — regular disclosures"
       },
       {
-        "name": "Marjorie Taylor Greene",
-        "chamber": "House",
+        "name": "Tommy Tuberville",
+        "chamber": "Senate",
         "party": "R",
-        "state": "GA",
-        "notes": "Active trader, defense and tech positions.",
-        "committees": ["Homeland Security", "Oversight"]
+        "state": "AL",
+        "notes": "High volume Senate trader. Defense and finance lean. Armed Services Committee.",
+        "committees": ["Armed Services", "Agriculture"],
+        "disclosure_activity": "Active — frequent senator filings"
       },
       {
-        "name": "Michael McCaul",
+        "name": "Dan Crenshaw",
         "chamber": "House",
         "party": "R",
         "state": "TX",
-        "notes": "Foreign Affairs Committee chair. Defense and semiconductor trades.",
-        "committees": ["Foreign Affairs", "Homeland Security"]
+        "notes": "Energy and defense focus. Trades align with committee knowledge. Consistent outperformance.",
+        "committees": ["Energy and Commerce"],
+        "disclosure_activity": "Active — regular monthly disclosures"
       },
       {
-        "name": "Ro Khanna",
+        "name": "Markwayne Mullin",
+        "chamber": "Senate",
+        "party": "R",
+        "state": "OK",
+        "notes": "71 trades and $4.4M volume in early 2025. Active senator trader.",
+        "committees": ["Armed Services", "Banking", "Commerce"],
+        "disclosure_activity": "Active — high frequency for a senator"
+      },
+      {
+        "name": "Richard Blumenthal",
+        "chamber": "Senate",
+        "party": "D",
+        "state": "CT",
+        "notes": "LED ALL OF CONGRESS by trading volume in 2025 with ~$80M in transactions. Hundreds of trades.",
+        "committees": ["Judiciary", "Armed Services", "Commerce"],
+        "disclosure_activity": "Extremely active — top by dollar volume"
+      },
+      {
+        "name": "David Taylor",
+        "chamber": "House",
+        "party": "R",
+        "state": "OH",
+        "notes": "Freshman congressman, emerged as one of biggest traders. 132 trades in first 14 months, 59 in 2026 alone.",
+        "committees": ["Energy and Commerce"],
+        "disclosure_activity": "Very active — top freshman trader"
+      }
+    ],
+    "tier_3_watchlist": [
+      {
+        "name": "Donald Norcross",
         "chamber": "House",
         "party": "D",
-        "state": "CA",
-        "notes": "Tech sector trades, Silicon Valley representative.",
-        "committees": ["Armed Services", "Oversight"]
+        "state": "NJ",
+        "notes": "70.8% returns in 2025 — second-best performer in Congress.",
+        "committees": ["Armed Services", "Education and Workforce"],
+        "disclosure_activity": "Active — strong returns"
+      },
+      {
+        "name": "Terri Sewell",
+        "chamber": "House",
+        "party": "D",
+        "state": "AL",
+        "notes": "67.9% returns in 2025 — third-best performer.",
+        "committees": ["Ways and Means", "Intelligence"],
+        "disclosure_activity": "Active — Intelligence Committee member (highest signal)"
+      },
+      {
+        "name": "Mark Green",
+        "chamber": "House",
+        "party": "R",
+        "state": "TN",
+        "notes": "Homeland Security Committee chair. Defense and cyber trades.",
+        "committees": ["Homeland Security"],
+        "disclosure_activity": "Active — regular filings"
       },
       {
         "name": "Dave Joyce",
@@ -85,33 +141,17 @@
         "party": "R",
         "state": "OH",
         "notes": "Appropriations Committee, diverse trading activity.",
-        "committees": ["Appropriations"]
-      }
-    ],
-    "tier_3_watchlist": [
-      {
-        "name": "Austin Scott",
-        "chamber": "House",
-        "party": "R",
-        "state": "GA",
-        "notes": "Armed Services Committee, agriculture and defense.",
-        "committees": ["Armed Services", "Agriculture"]
-      },
-      {
-        "name": "Pat Fallon",
-        "chamber": "House",
-        "party": "R",
-        "state": "TX",
-        "notes": "Armed Services Committee, frequent trader.",
-        "committees": ["Armed Services", "Oversight"]
+        "committees": ["Appropriations"],
+        "disclosure_activity": "Active — moderate volume"
       },
       {
         "name": "Shelley Moore Capito",
         "chamber": "Senate",
         "party": "R",
         "state": "WV",
-        "notes": "Energy and natural resources.",
-        "committees": ["Commerce", "Environment and Public Works", "Appropriations"]
+        "notes": "Energy and natural resources focus.",
+        "committees": ["Commerce", "Environment and Public Works", "Appropriations"],
+        "disclosure_activity": "Active — moderate volume"
       }
     ]
   },

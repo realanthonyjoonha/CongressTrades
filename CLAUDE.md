@@ -13,26 +13,31 @@ This is **independent** of the energy/AI trading project — it covers all secto
 5. Recommends options plays (tiered calls/puts with Greeks) for top 5-8 trades
 6. Emails the report to all 9 recipients via Resend API
 
-## Tracked Politicians (13 total)
+## Tracked Politicians (16 total)
 
-### Tier 1 — Top Performers (5)
-- Nancy Pelosi (D-CA)
-- Dan Crenshaw (R-TX)
-- Tommy Tuberville (R-AL)
-- Mark Green (R-TN)
-- Josh Gottheimer (D-NJ)
+All politicians are verified as **actively disclosing trades** based on 2025-2026 Capitol Trades and Quiver Quantitative data.
 
-### Tier 2 — Active Traders (5)
-- Gil Cisneros (D-CA)
-- Marjorie Taylor Greene (R-GA)
-- Michael McCaul (R-TX)
-- Ro Khanna (D-CA)
-- Dave Joyce (R-OH)
+### Tier 1 — Top Performers / Highest Volume (5)
+- **Nancy Pelosi** (D-CA) — Most-watched congressional trader; tech/semi timing
+- **Ro Khanna** (D-CA) — 4,081 trades in 2025, MOST ACTIVE in Congress
+- **Josh Gottheimer** (D-NJ) — $44M disclosed in 2025
+- **Michael McCaul** (R-TX) — $75M+ disclosed in 2025; Foreign Affairs chair
+- **Warren Davidson** (R-OH) — Top performer of 2025 with 78.8% returns
 
-### Tier 3 — Watchlist (3)
-- Austin Scott (R-GA)
-- Pat Fallon (R-TX)
-- Shelley Moore Capito (R-WV)
+### Tier 2 — Active Traders (6)
+- **Gil Cisneros** (D-CA) — Armed Services, large position sizes
+- **Tommy Tuberville** (R-AL) — Active Senate trader, defense focus
+- **Dan Crenshaw** (R-TX) — Energy & Commerce, consistent outperformer
+- **Markwayne Mullin** (R-OK) — 71 trades / $4.4M in early 2025
+- **Richard Blumenthal** (D-CT) — LED Congress with ~$80M volume in 2025
+- **David Taylor** (R-OH) — Top freshman trader, 59 trades in 2026 alone
+
+### Tier 3 — Watchlist / Best Returns (5)
+- **Donald Norcross** (D-NJ) — 70.8% returns in 2025 (#2 performer)
+- **Terri Sewell** (D-AL) — 67.9% returns; **Intelligence Committee** (highest signal)
+- **Mark Green** (R-TN) — Homeland Security chair
+- **Dave Joyce** (R-OH) — Appropriations
+- **Shelley Moore Capito** (R-WV) — Energy & natural resources
 
 ## Sectors Tracked
 - Technology & AI
