@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import db
+import sectors
 
 try:
     import yfinance as yf
@@ -112,7 +113,11 @@ def is_aligned(conn, ticker: str, sector: Optional[str]) -> bool:
     """
     Phase-0 simplified alignment check: a trade is committee-aligned if
       (a) the ticker is on the mega-cap override list, OR
-      (b) the trade's sector has at least one committee mapping.
+      (b) the trade has an explicit sector that maps to a committee, OR
+      (c) yfinance-derived sector for the ticker maps to a committee.
+
+    (c) is the new fallback — when ingest didn't classify sector (as in v1
+    PTR-only ingestion), we lazy-classify via yfinance and cache the result.
 
     Time-varying committee membership (per-trade-date committee history) is a
     Phase-1 enhancement once we have the politicians.committee_history JSON
@@ -121,6 +126,10 @@ def is_aligned(conn, ticker: str, sector: Optional[str]) -> bool:
     if db.is_mega_cap_override(conn, ticker):
         return True
     if sector and db.committees_for_sector(conn, sector):
+        return True
+    # Lazy classification via yfinance
+    classified = sectors.classify_ticker(ticker)
+    if classified and db.committees_for_sector(conn, classified):
         return True
     return False
 
@@ -309,16 +318,22 @@ def main():
 
     conn = db.connect()
     cur = conn.cursor()
+    # Order by trade count so --limit focuses on most-active traders.
     cur.execute(
         """
-        SELECT DISTINCT politician_name FROM trades
+        SELECT politician_name, COUNT(*) AS n FROM trades
         WHERE transaction_type = 'buy' AND trader_tag = 'member_direct'
-        ORDER BY politician_name
+        GROUP BY politician_name
+        ORDER BY n DESC
         """
     )
-    names = [r["politician_name"] for r in cur.fetchall()]
+    name_counts = cur.fetchall()
+    names = [r["politician_name"] for r in name_counts]
     if args.limit:
         names = names[: args.limit]
+        print(f"Top {args.limit} politicians by buy count:")
+        for r in name_counts[: args.limit]:
+            print(f"  {r['politician_name']}: {r['n']} buys")
 
     print(f"Evaluating {len(names)} politicians (lookback={args.lookback}yr, min-trades={args.min_trades})")
     results = []
