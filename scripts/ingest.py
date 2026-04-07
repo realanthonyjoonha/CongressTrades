@@ -193,32 +193,43 @@ def fetch_house_efd_pdf(year: int, doc_id: str, cache: bool = True) -> Optional[
         return None
 
 
-# Regex for tickers in PTR PDFs: parens-wrapped ALL CAPS, optional dot/dash
-PTR_TICKER_RE = re.compile(r"\(([A-Z]{1,5}(?:[.\-][A-Z]{1,3})?)\)")
-PTR_DATE_RE = re.compile(r"(\d{2}/\d{2}/\d{4})")
-PTR_AMOUNT_RE = re.compile(
-    r"\$(?:[\d,]+(?:\.\d{2})?)\s*-\s*\$(?:[\d,]+(?:\.\d{2})?)|"
-    r"\$(?:[\d,]+(?:\.\d{2})?)\+|"
-    r"\$1,?000,?001\s*-",
-    re.IGNORECASE,
+# PTR parser v2 — line-based, handles multi-line wraps.
+#
+# PTR row layouts (observed in real filings):
+#   Layout A (single line):
+#     "SP Albemarle Corporation (ALB) [ST] S 12/21/2023 01/08/2024 $1,001 - $15,000"
+#   Layout B (amount wraps to next line):
+#     "SP Charles Schwab Corporation (SCHW) P 12/14/2023 01/08/2024 $50,001 -"
+#     "[ST] $100,000"
+#   Layout C (asset name wraps, ticker on line 2):
+#     "SP Ameriprise Financial, Inc. Common P 04/09/2024 05/09/2024 $50,001 -"
+#     "Stock (AMP) [ST] $100,000"
+#   Layout D (asset name wraps, amount fully on line 1):
+#     "SP Cintas Corporation - Common Stock P 05/20/2024 06/07/2024 $1,001 - $15,000"
+#     "(CTAS) [ST]"
+#
+# Strategy: find "transaction lines" (P/S/E + two dates + $amount), then search
+# the current line and adjacent lines for the ticker in parens and owner code.
+
+PTR_TXN_LINE_RE = re.compile(
+    r"\s(?P<txn>P|S\s?\(partial\)|S|E)\s+"
+    r"(?P<trade_date>\d{2}/\d{2}/\d{4})\s+"
+    r"(?P<notif_date>\d{2}/\d{2}/\d{4})\s+"
+    r"(?P<amount>\$[\d,]+\s*-\s*\$?[\d,]*|\$[\d,]+\s*\+|\$[\d,]+)"
 )
-PTR_TXN_RE = re.compile(r"\b(P|S|S\s?\(?partial\)?|E)\b")
+PTR_TICKER_RE = re.compile(r"\(([A-Z][A-Z0-9.\-]{0,5})\)")
+PTR_OWNER_RE = re.compile(r"^\s*(SP|JT|DC)\b")
+PTR_HEADER_PHRASES = ("ID Owner Asset Transaction", "Type Date Gains", "$200?")
 
 
 def parse_ptr_pdf(pdf_bytes: bytes, doc_meta: Dict) -> List[Dict]:
     """
     Parse a House eFD Periodic Transaction Report PDF into individual trades.
-
-    PTR PDFs follow a tabular format. Each transaction row contains:
-        Owner | Asset (Ticker) | Type [P/S/E] | Date | Notification Date | Amount
-
-    This is a best-effort parser that handles the most common layouts. Anything
-    truly unparseable falls through to a placeholder so we don't lose the filing.
+    See module-level comment for supported row layouts.
     """
     if not HAS_PDFPLUMBER:
         return []
 
-    trades = []
     politician = f"{doc_meta.get('First','')} {doc_meta.get('Last','')}".strip()
     filing_date = doc_meta.get("FilingDate", "")
     try:
@@ -228,55 +239,81 @@ def parse_ptr_pdf(pdf_bytes: bytes, doc_meta: Dict) -> List[Dict]:
 
     try:
         with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
-            for page in pdf.pages:
-                # Try table extraction first; fall back to text regex.
-                tables = page.extract_tables() or []
-                for table in tables:
-                    for row in table:
-                        if not row or not any(row):
-                            continue
-                        joined = " | ".join(str(c or "") for c in row)
-                        ticker_m = PTR_TICKER_RE.search(joined)
-                        date_m = PTR_DATE_RE.findall(joined)
-                        amt_m = PTR_AMOUNT_RE.search(joined)
-                        if not ticker_m or not date_m:
-                            continue
-                        ticker = ticker_m.group(1)
-                        # First date in row = trade date, second = notification
-                        try:
-                            trade_date = datetime.strptime(date_m[0], "%m/%d/%Y").strftime("%Y-%m-%d")
-                        except ValueError:
-                            continue
-                        # Transaction type: look for 'P', 'S', 'E' tokens
-                        owner_code = None
-                        txn_type = "unknown"
-                        for cell in row:
-                            if cell is None:
-                                continue
-                            cs = str(cell).strip().upper()
-                            if cs in ("SP", "DC", "JT"):
-                                owner_code = cs
-                            if cs in ("P", "S", "E"):
-                                txn_type = normalize_transaction_type(cs)
-                            elif "PARTIAL" in cs:
-                                txn_type = "sell"
-                        amount = amt_m.group(0) if amt_m else None
-                        trades.append({
-                            "politician": politician,
-                            "chamber": "house",
-                            "trade_date": trade_date,
-                            "disclosure_date": filing_iso,
-                            "ticker": ticker,
-                            "transaction_type": txn_type,
-                            "amount_range": amount,
-                            "trader_tag": normalize_trader_tag(owner_code),
-                            "source": "house_efd",
-                            "source_id": doc_meta.get("DocID"),
-                            "asset_type": "stock",
-                        })
+            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
     except Exception as e:
         print(f"  [pdf parse error] {doc_meta.get('DocID')}: {e}", file=sys.stderr)
         return []
+
+    # Keep non-empty lines in order; strip trailing whitespace only
+    lines = [ln.rstrip() for ln in text.split("\n") if ln.strip()]
+
+    trades: List[Dict] = []
+    for i, line in enumerate(lines):
+        if any(p in line for p in PTR_HEADER_PHRASES):
+            continue
+        m = PTR_TXN_LINE_RE.search(line)
+        if not m:
+            continue
+
+        # Ticker: check this line, previous line, next line
+        ticker = None
+        context_lines = [
+            line,
+            lines[i - 1] if i > 0 else "",
+            lines[i + 1] if i + 1 < len(lines) else "",
+        ]
+        for candidate in context_lines:
+            tm = PTR_TICKER_RE.search(candidate)
+            if tm:
+                ticker = tm.group(1)
+                break
+        if not ticker:
+            continue  # likely a Treasury bill (no ticker in parens)
+
+        # Owner code (SP / JT / DC) — check this line and the line above
+        owner_code = None
+        for candidate in (line, lines[i - 1] if i > 0 else ""):
+            om = PTR_OWNER_RE.match(candidate)
+            if om:
+                owner_code = om.group(1)
+                break
+
+        # Stitch wrap-around amount: if amount ends with "-", append next $amount
+        amount = m.group("amount").strip()
+        if amount.endswith("-") and i + 1 < len(lines):
+            next_amt_m = re.search(r"\$[\d,]+", lines[i + 1])
+            if next_amt_m:
+                amount = amount + " " + next_amt_m.group(0)
+
+        # Trade date ISO
+        try:
+            trade_date_iso = datetime.strptime(m.group("trade_date"), "%m/%d/%Y").strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+
+        txn_raw = m.group("txn").strip().upper()
+        if txn_raw == "P":
+            txn_type = "buy"
+        elif "S" in txn_raw:
+            txn_type = "sell"
+        elif txn_raw == "E":
+            txn_type = "exchange"
+        else:
+            txn_type = "unknown"
+
+        trades.append({
+            "politician": politician,
+            "chamber": "house",
+            "trade_date": trade_date_iso,
+            "disclosure_date": filing_iso,
+            "ticker": ticker,
+            "transaction_type": txn_type,
+            "amount_range": amount,
+            "trader_tag": normalize_trader_tag(owner_code),
+            "source": "house_efd",
+            "source_id": doc_meta.get("DocID"),
+            "asset_type": "stock",
+        })
 
     return trades
 
