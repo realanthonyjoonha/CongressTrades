@@ -1,0 +1,98 @@
+{
+  "_comment": "CongressTrades — committees, sector mappings, mega-cap override list. See specs/01-universe.md",
+  "version": "1.0",
+
+  "primary_committees": [
+    {"id": "HPSCI", "name": "House Intelligence", "chamber": "house", "domain": "Geopolitics, cyber, defense, China/Taiwan, semis, AI export controls"},
+    {"id": "SSCI", "name": "Senate Intelligence", "chamber": "senate", "domain": "Geopolitics, cyber, defense, China/Taiwan, semis, AI export controls"},
+    {"id": "HASC", "name": "House Armed Services", "chamber": "house", "domain": "DoD contracts, weapons, defense budget, defense primes, military AI"},
+    {"id": "SASC", "name": "Senate Armed Services", "chamber": "senate", "domain": "DoD contracts, weapons, defense budget, defense primes, military AI"},
+    {"id": "E&C", "name": "House Energy & Commerce", "chamber": "house", "domain": "FDA, drug pricing, energy, pipelines, telecom, AI regulation, data privacy, social media"},
+    {"id": "ENR", "name": "Senate Energy & Natural Resources", "chamber": "senate", "domain": "Energy, pipelines, public lands"},
+    {"id": "Approp", "name": "House Appropriations", "chamber": "house", "domain": "Federal spending, broad cross-sector"},
+    {"id": "Finance", "name": "Senate Finance", "chamber": "senate", "domain": "Tax policy, Treasury, broad cross-sector"},
+    {"id": "W&M", "name": "House Ways & Means", "chamber": "house", "domain": "Tax policy, Treasury, broad cross-sector"},
+    {"id": "HFAC", "name": "House Foreign Affairs", "chamber": "house", "domain": "Sanctions, export controls, arms sales, geopolitical risk, trade agreements"},
+    {"id": "SFRC", "name": "Senate Foreign Relations", "chamber": "senate", "domain": "Sanctions, export controls, arms sales, geopolitical risk, trade agreements"},
+    {"id": "Senate Commerce", "name": "Senate Commerce, Science & Transport", "chamber": "senate", "domain": "AI policy, FTC, NIST, broadband, platform regulation"},
+    {"id": "HFSC", "name": "House Financial Services", "chamber": "house", "domain": "Bank regulation, crypto, Fed oversight, financial stability"},
+    {"id": "Senate Banking", "name": "Senate Banking", "chamber": "senate", "domain": "Bank regulation, crypto, Fed oversight, financial stability"},
+    {"id": "HHS", "name": "House Homeland Security", "chamber": "house", "domain": "CISA, DHS contracting, cybersecurity legislation, border tech"},
+    {"id": "HSGAC", "name": "Senate Homeland Security & Governmental Affairs", "chamber": "senate", "domain": "CISA, DHS contracting, cybersecurity legislation, border tech"}
+  ],
+
+  "watchlist_committees": [
+    {"id": "Judiciary", "name": "Judiciary", "chamber": "both", "domain": "Big Tech antitrust, AI copyright/IP, DOJ investigations", "alignment_floor": 0.5},
+    {"id": "S&T", "name": "Science, Space & Technology", "chamber": "house", "domain": "NASA contracts, NSF/NIST, R&D, quantum", "alignment_floor": 0.5}
+  ],
+
+  "leadership_positions": [
+    {"position": "Speaker of the House", "scope": "chamber-wide", "alignment_floor": 0.7},
+    {"position": "House Majority Leader", "scope": "chamber-wide", "alignment_floor": 0.7},
+    {"position": "House Minority Leader", "scope": "chamber-wide", "alignment_floor": 0.7},
+    {"position": "House Majority Whip", "scope": "chamber-wide", "alignment_floor": 0.7},
+    {"position": "House Minority Whip", "scope": "chamber-wide", "alignment_floor": 0.7},
+    {"position": "Senate Majority Leader", "scope": "chamber-wide", "alignment_floor": 0.7},
+    {"position": "Senate Minority Leader", "scope": "chamber-wide", "alignment_floor": 0.7},
+    {"position": "Senate Majority Whip", "scope": "chamber-wide", "alignment_floor": 0.7},
+    {"position": "Senate Minority Whip", "scope": "chamber-wide", "alignment_floor": 0.7},
+    {"position": "Caucus Chair", "scope": "chamber-wide", "alignment_floor": 0.7},
+    {"position": "Committee Chair", "scope": "committee-only", "alignment_floor": 0.7},
+    {"position": "Ranking Member", "scope": "committee-only", "alignment_floor": 0.7}
+  ],
+
+  "sector_to_committee": {
+    "semiconductors": ["HPSCI", "SSCI", "Senate Commerce"],
+    "ai_compute": ["HPSCI", "SSCI", "Senate Commerce", "E&C"],
+    "cyber": ["HPSCI", "SSCI", "HHS", "HSGAC"],
+    "china_exposed_tech": ["HPSCI", "SSCI", "HFAC", "SFRC"],
+    "defense_primes": ["HASC", "SASC"],
+    "biotech": ["E&C"],
+    "pharma": ["E&C"],
+    "medical_devices": ["E&C"],
+    "oil_gas": ["E&C", "ENR"],
+    "pipelines": ["E&C", "ENR"],
+    "utilities": ["E&C", "ENR"],
+    "renewables": ["E&C", "ENR"],
+    "telecom": ["E&C", "Senate Commerce"],
+    "broad_market": ["Approp", "Finance", "W&M"],
+    "financials": ["Approp", "Finance", "W&M", "HFSC", "Senate Banking"],
+    "tax_sensitive": ["Approp", "Finance", "W&M"],
+    "banks": ["HFSC", "Senate Banking"],
+    "crypto": ["HFSC", "Senate Banking"],
+    "geopolitically_exposed": ["HFAC", "SFRC"],
+    "border_tech": ["HHS", "HSGAC"],
+    "dhs_contractors": ["HHS", "HSGAC"],
+    "big_tech_antitrust": ["Judiciary"],
+    "cloud_data_centers": ["Senate Commerce", "E&C"]
+  },
+
+  "mega_cap_override": [
+    {"ticker": "MSFT", "committees": ["HPSCI", "Senate Commerce", "Judiciary"], "rationale": "Cloud, AI, antitrust, defense contracts"},
+    {"ticker": "AAPL", "committees": ["HPSCI", "Judiciary", "HFAC"], "rationale": "China exposure, antitrust, app store"},
+    {"ticker": "GOOGL", "committees": ["HPSCI", "Senate Commerce", "Judiciary"], "rationale": "Search antitrust, AI, ad market"},
+    {"ticker": "AMZN", "committees": ["HPSCI", "Judiciary", "Senate Commerce"], "rationale": "AWS govt cloud, antitrust, logistics"},
+    {"ticker": "META", "committees": ["HPSCI", "Judiciary", "Senate Commerce"], "rationale": "Platform regulation, antitrust, AI"},
+    {"ticker": "NVDA", "committees": ["HPSCI", "SSCI", "Senate Commerce"], "rationale": "AI chips, China export controls"},
+    {"ticker": "TSMC", "committees": ["HPSCI", "SSCI", "HFAC"], "rationale": "Taiwan exposure, chip sovereignty"},
+    {"ticker": "AVGO", "committees": ["HPSCI", "SSCI", "Senate Commerce"], "rationale": "Networking chips, AI infra"},
+    {"ticker": "CRM", "committees": ["Senate Commerce", "HFSC"], "rationale": "Enterprise SaaS, govt contracts"},
+    {"ticker": "ORCL", "committees": ["HPSCI", "Senate Commerce"], "rationale": "TikTok deal, govt cloud"},
+    {"ticker": "IBM", "committees": ["HPSCI", "HASC", "Senate Commerce"], "rationale": "Quantum, govt contracts, AI"},
+    {"ticker": "LMT", "committees": ["HASC", "SASC", "HFAC"], "rationale": "Defense prime"},
+    {"ticker": "RTX", "committees": ["HASC", "SASC", "HFAC"], "rationale": "Defense prime"},
+    {"ticker": "BA", "committees": ["HASC", "SASC", "Senate Commerce"], "rationale": "Defense, FAA, exports"},
+    {"ticker": "GD", "committees": ["HASC", "SASC", "HHS"], "rationale": "Defense + IT services"},
+    {"ticker": "NOC", "committees": ["HASC", "SASC", "HPSCI"], "rationale": "Defense + classified programs"},
+    {"ticker": "JPM", "committees": ["HFSC", "Senate Banking", "Approp"], "rationale": "Systemic bank"},
+    {"ticker": "GS", "committees": ["HFSC", "Senate Banking"], "rationale": "Systemic bank"},
+    {"ticker": "UNH", "committees": ["E&C", "Finance", "W&M"], "rationale": "Healthcare reform exposure"},
+    {"ticker": "JNJ", "committees": ["E&C", "Judiciary"], "rationale": "Pharma + litigation"},
+    {"ticker": "PFE", "committees": ["E&C", "Approp"], "rationale": "FDA + federal contracts"},
+    {"ticker": "CVX", "committees": ["E&C", "ENR", "HFAC"], "rationale": "Energy + sanctions exposure"},
+    {"ticker": "XOM", "committees": ["E&C", "ENR", "HFAC"], "rationale": "Energy + sanctions exposure"},
+    {"ticker": "CRWD", "committees": ["HHS", "HSGAC", "HPSCI"], "rationale": "Federal cyber contracts"},
+    {"ticker": "PANW", "committees": ["HHS", "HSGAC", "HPSCI"], "rationale": "Federal cyber contracts"},
+    {"ticker": "PLTR", "committees": ["HASC", "HPSCI", "HHS"], "rationale": "DoD + IC + DHS contracts"}
+  ]
+}

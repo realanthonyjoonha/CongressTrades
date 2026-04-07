@@ -1,0 +1,96 @@
+# 07 — Agents & Notifications
+
+## Agent 1 — Data Maintenance
+**Schedule**: Daily, early morning (before Agent 2)
+**Purpose**: Silent data pipeline
+
+**Work**:
+1. Pull fresh disclosures from House eFD, Capitol Trades, Finnhub
+2. Reconcile, dedupe, tag as `member_direct` / `spouse` / `dependent`
+3. Write to `trades` table
+4. Update paper-trading positions via daily mark-to-market
+5. Refresh price data for open positions
+6. Compute and cache per-stock volatility metrics (`hist_range_45d`, `realized_vol_60d`, `sector_vol_60d`) for OWD
+
+**Output**: No email unless error. Clean DB for Agent 2.
+
+## Agent 2 — Daily Signal
+**Schedule**: Weekday mornings, after Agent 1
+**Purpose**: Score overnight disclosures, generate recommendations
+
+**Work**:
+1. Read overnight trades from DB
+2. Run full pipeline (Stages 1–4), log all raw values to `trade_diagnostics`
+3. Research forward catalysts via web search (5–10 searches per trade)
+4. For high-profile spouse trades: media coverage detection search
+5. Call options module (shared code) for plays
+6. Write recommendations to `recommendations` table
+7. Compose daily digest email
+8. Fire instant `[STRONG SIGNAL]` email if any STRONG-tier play produced
+
+**Output**: Daily digest + potential instant STRONG alerts via Resend.
+
+## Agent 3 — Weekly Deep Research
+**Schedule**: Sunday night
+**Purpose**: Deep analysis + performance review + parameter health
+
+**Work**:
+1. Review week's flagged trades from Agent 2
+2. Pick top 5–10 for deep research (15–25 web searches per trade)
+3. Pull full live options chain + Greeks via MMD for STRONG plays
+4. Roll up paper-trading P&L: hit rates by signal tier / politician / committee / sector
+5. Identify roster members with degrading performance → recommend demotion
+6. **Run feedback loop** (see `specs/04-feedback.md`):
+   - Compute FN/FP rates, per-check correlations, sensitivity analysis
+   - Compute retroactive outcomes on filtered trades
+   - Surface parameter adjustment proposals in "Parameter Health" section
+7. Report spouse trade P&L separately
+
+**Output**: Weekly email (~5–8K words) with Parameter Health section.
+
+## Agent 4 — Politician Deep-Dive
+**Schedule**: On-demand
+**Invocation**: `./run-agent.sh deepdive "Josh Gottheimer"`
+**Purpose**: Full profile on one politician
+
+**Work**:
+1. Pull all trades from DB
+2. Compute committee-aligned hit rate (overall + recency-weighted)
+3. Sector concentration, timing patterns vs legislative calendar
+4. Spouse trade performance (separate)
+5. 15–25 web searches on current committee work, statements, upcoming hearings
+
+**Output**: Single-politician email to user only.
+
+## Agent 5 — Backtest / Roster Generator
+**Schedule**: Phase 0 + on-demand + quarterly recalibration
+**Purpose**: Generate roster, re-validate, recalibrate parameters
+
+**Work (roster mode)**:
+1. Build candidate universe (~200–250 from 8 committees + leadership)
+2. Seed 5yr historical trades from eFD + Capitol Trades + Finnhub
+3. Filter to committee-aligned trades (time-varying membership)
+4. Compute both metrics (overall + recency-weighted) vs SPY at 60-day
+5. Apply pass bar (>5% vs SPY, >55% hit rate, both independently)
+6. Floor: top 15 if <15 pass
+7. Flag committee-transition members as probationary
+8. Output roster + watchlist/fading-edge flags → write to `politicians` table
+
+**Work (quarterly recalibration mode)**:
+1. Replay trailing 6mo trades through OWD with grid search across all `k_XX`
+2. Output "Quarterly Recalibration Report" with recommended parameter set
+3. Human approval required before applying
+
+**Output**: Roster report + roster written to DB. Recalibration report when in that mode.
+
+## Notifications
+
+| Channel | Trigger | Frequency |
+|---|---|---|
+| Daily digest | Agent 2 completes | 6 AM ET weekdays |
+| `[STRONG SIGNAL]` alert | STRONG-tier play produced | A few times/month |
+| Weekly deep report | Agent 3 completes | Sunday night |
+| On-demand reports | Deep-dive, backtest, recalibration | As triggered |
+
+**Delivery**: Resend API via `apesdegen.com`.
+**Distribution**: Smaller than Trading project's 9 recipients. Exact list TBD.
