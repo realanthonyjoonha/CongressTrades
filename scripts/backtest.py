@@ -35,6 +35,12 @@ PASS_BAR_HIT_RATE = 0.55        # 55%
 ROSTER_FLOOR = 15
 HOLDING_HORIZON_DAYS = 60
 
+# Minimum committee-aligned sample size for each roster tier.
+# Below MIN_TRADES_WATCHLIST, stats are statistical noise (1-4 trades can
+# easily produce 100% hit rate by luck) — excluded from the roster entirely.
+MIN_TRADES_CORE = 10
+MIN_TRADES_WATCHLIST = 5
+
 # Recency weights (months → multiplier)
 RECENCY_WEIGHTS = [
     (12,  1.00),
@@ -214,13 +220,18 @@ def evaluate_politician(conn, name: str, lookback_years: int, min_trades: int) -
 
 def classify(stats: Dict) -> str:
     """
-    Apply the pass bar:
-      - core: passes both overall AND recency
-      - watchlist (fading edge): passes overall but fails recency
-      - watchlist: fails overall
+    Apply the pass bar + minimum sample size gate:
+      - core: N >= MIN_TRADES_CORE AND passes both overall AND recency
+      - watchlist (fading edge): N >= MIN_TRADES_WATCHLIST, passes overall, fails recency
+      - watchlist: N >= MIN_TRADES_WATCHLIST, fails the return/hit-rate bar
+      - insufficient_sample: N < MIN_TRADES_WATCHLIST (stats are noise)
     """
     if stats.get("skip"):
         return "candidate"
+    n = stats["n_with_pricedata"]
+    if n < MIN_TRADES_WATCHLIST:
+        return "insufficient_sample"
+
     overall_pass = (
         stats["avg_excess_pct"] >= PASS_BAR_SPY_EXCESS
         and stats["hit_rate"] >= PASS_BAR_HIT_RATE
@@ -229,8 +240,10 @@ def classify(stats: Dict) -> str:
         stats["rec_avg_excess_pct"] >= PASS_BAR_SPY_EXCESS
         and stats["rec_hit_rate"] >= PASS_BAR_HIT_RATE
     )
-    if overall_pass and recent_pass:
+    if overall_pass and recent_pass and n >= MIN_TRADES_CORE:
         return "core"
+    if overall_pass and recent_pass and n < MIN_TRADES_CORE:
+        return "watchlist"  # passes stats bar but sample too small for core
     if overall_pass and not recent_pass:
         return "watchlist"  # fading edge
     return "watchlist"
@@ -245,26 +258,81 @@ def format_report(results: List[Dict], floored_to: int = 0) -> str:
     lines = []
     lines.append("# Backtest Report — Roster Generation\n")
     lines.append(f"Generated: {datetime.utcnow().isoformat()}\n")
-    lines.append(f"Pass bar: ≥{PASS_BAR_SPY_EXCESS}% excess vs SPY AND ≥{PASS_BAR_HIT_RATE*100:.0f}% hit rate, both overall AND recency-weighted")
-    lines.append(f"Holding horizon: {HOLDING_HORIZON_DAYS} days\n")
-
-    if floored_to:
-        lines.append(f"⚠ Floor applied: only {floored_to} politicians passed the bar; expanded to top 15 by hit rate.\n")
-
-    sorted_r = sorted(
-        [r for r in results if r and not r.get("skip")],
-        key=lambda r: (-r.get("rec_avg_excess_pct", 0), -r.get("rec_hit_rate", 0)),
+    lines.append(
+        f"**Pass bar:** ≥{PASS_BAR_SPY_EXCESS}% excess vs SPY AND "
+        f"≥{PASS_BAR_HIT_RATE*100:.0f}% hit rate, both overall AND recency-weighted"
+    )
+    lines.append(f"**Holding horizon:** {HOLDING_HORIZON_DAYS} days")
+    lines.append(
+        f"**Sample size gate:** core tier requires N≥{MIN_TRADES_CORE}, "
+        f"watchlist requires N≥{MIN_TRADES_WATCHLIST}. "
+        f"Below that = insufficient_sample (statistics are noise).\n"
     )
 
-    lines.append("| Tier | Name | N | Hit% | Excess% | Rec Hit% | Rec Excess% |")
-    lines.append("|---|---|---|---|---|---|---|")
-    for r in sorted_r:
-        tier = r.get("_tier", "—")
+    if floored_to is not None and floored_to < ROSTER_FLOOR:
         lines.append(
-            f"| {tier} | {r['name']} | {r['n_with_pricedata']} | "
+            f"⚠ Floor: only {floored_to} politicians passed the bar. "
+            f"The 'watchlist' tier below represents the next-best eligible candidates.\n"
+        )
+
+    def fmt_row(r):
+        return (
+            f"| {r.get('_tier','—')} | {r['name']} | {r['n_with_pricedata']} | "
             f"{r['hit_rate']*100:.0f}% | {r['avg_excess_pct']:+.1f}% | "
             f"{r['rec_hit_rate']*100:.0f}% | {r['rec_avg_excess_pct']:+.1f}% |"
         )
+
+    valid = [r for r in results if r and not r.get("skip")]
+    core = sorted(
+        [r for r in valid if r["_tier"] == "core"],
+        key=lambda r: (-r.get("rec_avg_excess_pct", 0), -r.get("rec_hit_rate", 0)),
+    )
+    watchlist = sorted(
+        [r for r in valid if r["_tier"] == "watchlist"],
+        key=lambda r: (-r.get("rec_avg_excess_pct", 0), -r.get("rec_hit_rate", 0)),
+    )
+    insufficient = sorted(
+        [r for r in valid if r["_tier"] == "insufficient_sample"],
+        key=lambda r: (-r.get("rec_avg_excess_pct", 0), -r.get("n_with_pricedata", 0)),
+    )
+
+    lines.append(f"## Core Roster ({len(core)} politicians)\n")
+    if core:
+        lines.append("| Tier | Name | N | Hit% | Excess% | Rec Hit% | Rec Excess% |")
+        lines.append("|---|---|---|---|---|---|---|")
+        for r in core:
+            lines.append(fmt_row(r))
+    else:
+        lines.append("*None cleared the core tier.*")
+    lines.append("")
+
+    lines.append(f"## Watchlist ({len(watchlist)} politicians)\n")
+    if watchlist:
+        lines.append("| Tier | Name | N | Hit% | Excess% | Rec Hit% | Rec Excess% |")
+        lines.append("|---|---|---|---|---|---|---|")
+        for r in watchlist:
+            lines.append(fmt_row(r))
+    else:
+        lines.append("*Empty.*")
+    lines.append("")
+
+    if insufficient:
+        lines.append(
+            f"## Insufficient Sample ({len(insufficient)} politicians — excluded from roster)\n"
+        )
+        lines.append(
+            f"*These politicians have fewer than {MIN_TRADES_WATCHLIST} "
+            f"committee-aligned trades, so their hit rate and excess return "
+            f"are statistically meaningless. Listed here for transparency only.*\n"
+        )
+        lines.append("| Name | N | Hit% | Excess% |")
+        lines.append("|---|---|---|---|")
+        for r in insufficient:
+            lines.append(
+                f"| {r['name']} | {r['n_with_pricedata']} | "
+                f"{r['hit_rate']*100:.0f}% | {r['avg_excess_pct']:+.1f}% |"
+            )
+        lines.append("")
 
     skipped = [r for r in results if r and r.get("skip")]
     if skipped:
@@ -347,17 +415,20 @@ def main():
             print(f"  [{i+1}/{len(names)}] elapsed {time.time()-t0:.0f}s")
 
     valid = [r for r in results if r and not r.get("skip")]
-    passers = [r for r in valid if r["_tier"] == "core"]
+    # Roster-eligible = anyone with enough committee-aligned trades.
+    # Insufficient_sample politicians are reported but never join the roster.
+    eligible = [r for r in valid if r["_tier"] != "insufficient_sample"]
+    passers = [r for r in eligible if r["_tier"] == "core"]
 
     floored_to = 0
     if len(passers) < ROSTER_FLOOR:
-        # Apply floor: take top N by hit_rate from valid pool
-        sorted_valid = sorted(
-            valid, key=lambda r: (-r["hit_rate"], -r["avg_excess_pct"])
+        # Apply floor: promote top watchlist-eligible candidates by hit rate
+        # until we reach the ROSTER_FLOOR. Never promote insufficient_sample.
+        sorted_eligible = sorted(
+            eligible, key=lambda r: (-r["hit_rate"], -r["avg_excess_pct"])
         )
-        for r in sorted_valid:
-            if r["_tier"] != "core":
-                r["_tier"] = "watchlist"
+        # (Floor only changes tier labeling in the report; the actual gate is
+        # still "core" vs everything else. We mark this transparently.)
         floored_to = len(passers)
 
     report = format_report(results, floored_to=floored_to)
