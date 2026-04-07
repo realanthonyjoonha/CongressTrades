@@ -52,30 +52,71 @@ RECENCY_WEIGHTS = [
 
 
 # ---------------------------------------------------------------------------
-# Price fetching with cache
+# Price fetching with persistent cache
 # ---------------------------------------------------------------------------
+#
+# Cache structure: {ticker: {date_iso: close_price}}
+# Persisted to data/price_cache.json so backtest runs warm the cache for
+# subsequent deep-dive / signal-agent runs. Without persistence, every
+# deepdive invocation re-fetches ~200 tickers from yfinance (~10 minutes).
 
-_price_cache: Dict[str, Dict] = {}  # ticker → {date_iso: close}
+_price_cache: Dict[str, Dict[str, float]] = {}
+_price_cache_dirty = False
+_PRICE_CACHE_PATH = Path(__file__).resolve().parent.parent / "data" / "price_cache.json"
+
+
+def _load_price_cache() -> None:
+    """Load persisted price cache from disk on import. Silent if missing."""
+    global _price_cache
+    if _PRICE_CACHE_PATH.exists():
+        try:
+            with open(_PRICE_CACHE_PATH) as f:
+                _price_cache = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"  [price_cache] failed to load: {e}", file=sys.stderr)
+            _price_cache = {}
+
+
+def save_price_cache() -> None:
+    """
+    Persist the in-memory price cache to disk. Call this from any script
+    that uses the price cache extensively (backtest.main, deepdive.main).
+    No-op if nothing was added since the last save.
+    """
+    global _price_cache_dirty
+    if not _price_cache_dirty:
+        return
+    try:
+        _PRICE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(_PRICE_CACHE_PATH, "w") as f:
+            json.dump(_price_cache, f, separators=(",", ":"))
+        _price_cache_dirty = False
+    except OSError as e:
+        print(f"  [price_cache] failed to save: {e}", file=sys.stderr)
 
 
 def get_close(ticker: str, target_date: str) -> Optional[float]:
     """Return the close price on/after target_date (next trading day if needed)."""
     if not HAS_YF:
         return None
+    global _price_cache_dirty
     if ticker not in _price_cache:
         try:
             t = yf.Ticker(ticker)
             hist = t.history(period="6y", auto_adjust=True)
             if hist.empty:
                 _price_cache[ticker] = {}
+                _price_cache_dirty = True
                 return None
             _price_cache[ticker] = {
                 idx.strftime("%Y-%m-%d"): float(row["Close"])
                 for idx, row in hist.iterrows()
             }
+            _price_cache_dirty = True
         except Exception as e:
             print(f"  [yf error] {ticker}: {e}", file=sys.stderr)
             _price_cache[ticker] = {}
+            _price_cache_dirty = True
             return None
 
     cache = _price_cache[ticker]
@@ -86,6 +127,10 @@ def get_close(ticker: str, target_date: str) -> Optional[float]:
         if d >= target_date:
             return cache[d]
     return None
+
+
+# Auto-load on import so every script gets the warm cache for free.
+_load_price_cache()
 
 
 def compute_excess_return(ticker: str, trade_date: str, days: int = 60) -> Optional[float]:
@@ -443,6 +488,7 @@ def main():
         print(f"\nWrote {n} politicians to DB")
 
     conn.close()
+    save_price_cache()
 
 
 if __name__ == "__main__":

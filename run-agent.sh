@@ -66,7 +66,104 @@ case "$cmd" in
     python3 "$SCRIPTS_DIR/db.py" "$@"
     ;;
 
-  daily|weekly|deepdive|tracker)
+  deepdive)
+    POLITICIAN="${1:-}"
+    if [ -z "$POLITICIAN" ]; then
+      echo "Usage: $0 deepdive \"Politician Name\""
+      echo "Example: $0 deepdive \"Mark Green\""
+      exit 1
+    fi
+    shift
+
+    # Slug for filenames: "Mark Green" -> "mark_green"
+    SLUG=$(echo "$POLITICIAN" | tr '[:upper:] ' '[:lower:]_' | tr -cd '[:alnum:]_')
+
+    LOG="$LOG_DIR/deepdive_${SLUG}_${TIMESTAMP}.log"
+    RESEARCH_PACK="$TMP_DIR/deepdive_${SLUG}_${TIMESTAMP}_pack.md"
+    NARRATIVE="$TMP_DIR/deepdive_${SLUG}_${TIMESTAMP}_narrative.md"
+    REPORT="$REPORT_DIR/deepdive_${SLUG}_${TIMESTAMP}.html"
+    DEEPDIVE_RECIPIENT="${DEEPDIVE_RECIPIENT:-anthonyjoonha@gmail.com}"
+
+    echo "[deepdive] $(date) — politician: $POLITICIAN" | tee -a "$LOG"
+    echo "[deepdive] slug: $SLUG" | tee -a "$LOG"
+    echo "[deepdive] recipient: $DEEPDIVE_RECIPIENT" | tee -a "$LOG"
+
+    # ---- Phase A: Python analytical driver ----
+    echo "[deepdive] Phase A — running analytical driver..." | tee -a "$LOG"
+    set +e
+    python3 "$SCRIPTS_DIR/deepdive.py" "$POLITICIAN" \
+        --out "$RESEARCH_PACK" "$@" 2>&1 | tee -a "$LOG"
+    PY_EXIT=${PIPESTATUS[0]}
+    set -e
+    if [ "$PY_EXIT" -ne 0 ]; then
+      echo "[deepdive] ERROR: Phase A driver exited $PY_EXIT" | tee -a "$LOG"
+      exit 1
+    fi
+
+    if [ ! -s "$RESEARCH_PACK" ]; then
+      echo "[deepdive] ERROR: research pack empty or missing at $RESEARCH_PACK" | tee -a "$LOG"
+      exit 1
+    fi
+    PACK_BYTES=$(wc -c < "$RESEARCH_PACK")
+    echo "[deepdive] Phase A complete — research pack: ${PACK_BYTES} bytes" | tee -a "$LOG"
+
+    # ---- Phase B: LLM narrative layer ----
+    echo "[deepdive] Phase B — invoking Claude for narrative synthesis..." | tee -a "$LOG"
+
+    # Substitute template variables in the prompt
+    PROMPT=$(sed \
+        -e "s|{POLITICIAN_NAME}|$POLITICIAN|g" \
+        -e "s|{RESEARCH_PACK_PATH}|$RESEARCH_PACK|g" \
+        "$PROMPTS_DIR/deepdive.md")
+
+    # Run Claude with stdout capture as the deliverable.
+    # Background + wait pattern lets us add a hard timeout if needed.
+    echo "$PROMPT" | claude --print --dangerously-skip-permissions \
+        > "$NARRATIVE" 2>> "$LOG" || {
+      echo "[deepdive] WARN: claude exited non-zero, checking output..." | tee -a "$LOG"
+    }
+
+    if [ ! -s "$NARRATIVE" ]; then
+      echo "[deepdive] ERROR: narrative file empty — Claude subprocess produced no output" | tee -a "$LOG"
+      exit 1
+    fi
+    NARRATIVE_BYTES=$(wc -c < "$NARRATIVE")
+    echo "[deepdive] Phase B complete — narrative: ${NARRATIVE_BYTES} bytes" | tee -a "$LOG"
+
+    # Check for auth failure markers
+    if grep -qiE "invalid api key|please run /login|authentication failed" "$NARRATIVE"; then
+      echo "[deepdive] ERROR: Claude auth failure detected — run 'claude login'" | tee -a "$LOG"
+      exit 1
+    fi
+
+    # ---- Phase C: HTML + email delivery (user only) ----
+    echo "[deepdive] Phase C — formatting HTML and sending email..." | tee -a "$LOG"
+
+    # Extract SUBJECT line; fall back to a sensible default
+    SUBJECT=$(grep "^SUBJECT:" "$NARRATIVE" | head -1 | sed 's/^SUBJECT: *//')
+    if [ -z "$SUBJECT" ]; then
+      SUBJECT="Deep-Dive — $POLITICIAN ($DATE_DISPLAY)"
+      echo "[deepdive] WARN: no SUBJECT line found, using default: $SUBJECT" | tee -a "$LOG"
+    fi
+    echo "[deepdive] subject: $SUBJECT" | tee -a "$LOG"
+
+    # Strip the SUBJECT line before formatting (it shouldn't appear in the email body)
+    grep -v "^SUBJECT:" "$NARRATIVE" | python3 "$SCRIPTS_DIR/format_report.py" > "$REPORT"
+
+    if [ ! -s "$REPORT" ]; then
+      echo "[deepdive] ERROR: HTML report empty after format_report.py" | tee -a "$LOG"
+      exit 1
+    fi
+
+    python3 "$SCRIPTS_DIR/send_email.py" \
+        --subject "$SUBJECT" \
+        --html-file "$REPORT" \
+        --to "$DEEPDIVE_RECIPIENT" 2>&1 | tee -a "$LOG"
+
+    echo "[deepdive] DONE — report: $REPORT" | tee -a "$LOG"
+    ;;
+
+  daily|weekly|tracker)
     echo "[$cmd] not yet wired — Phase 2 work. See specs/07-agents.md"
     exit 2
     ;;

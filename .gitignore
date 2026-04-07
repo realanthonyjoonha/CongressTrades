@@ -3,6 +3,10 @@ outputs/logs/
 outputs/reports/
 outputs/tmp/
 
+# Local caches — derived artifacts, rebuilt on demand.
+# (sector_cache.json is tracked because it's small and seeds new machines.)
+data/price_cache.json
+
 # Python
 __pycache__/
 *.pyc
