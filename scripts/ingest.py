@@ -87,19 +87,80 @@ def http_get(url: str, timeout: int = 30, retries: int = 3) -> bytes:
 # Normalization helpers
 # ---------------------------------------------------------------------------
 
-def normalize_name(name: str) -> str:
-    """Lowercase, strip accents, drop honorifics and middle initials, collapse whitespace."""
-    if not name:
+# Politician name normalization
+# Handles the ugly cases observed in real House eFD data:
+#   "Hon. Richard W. Allen"           -> "Richard Allen"
+#   "Scott Scott Franklin"            -> "Scott Franklin"    (duplicated first)
+#   "C. Scott Franklin"               -> "Scott Franklin"    (initial prefix)
+#   "Scott Mr Franklin"               -> "Scott Franklin"    (mid honorific)
+#   "Donald Sternoff Honorable Beyer" -> "Donald Sternoff Beyer"
+#   "Marjorie Taylor Mrs Greene"      -> "Marjorie Taylor Greene"
+#   "Mark Dr Green"                   -> "Mark Green"
+#   "James E Hon Banks"               -> "James Banks"
+# Real middle names (like Taylor in Marjorie Taylor Greene) are preserved.
+
+_HONORIFICS = {
+    "mr", "mrs", "ms", "miss", "dr", "hon", "honorable",
+    "rep", "sen", "representative", "senator", "rev", "sir", "the",
+}
+_SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v", "esq", "phd", "md", "facs", "dds"}
+_NAME_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z'.\-]*")
+
+
+def _title_token(t: str) -> str:
+    """
+    Title-case a single name token. Preserves intentional mid-word capitals
+    like 'DesJarlais', 'LaHood', 'McDonald', 'MacKenzie' by only title-casing
+    when the input is all-lowercase or all-uppercase.
+    """
+    if not t:
+        return t
+    # Preserve tokens that already have intentional mixed case
+    if t != t.lower() and t != t.upper():
+        return t
+    low = t.lower()
+    if low.startswith("mc") and len(t) > 2:
+        return "Mc" + t[2:].capitalize()
+    if "'" in t:
+        return "'".join(p.capitalize() for p in t.split("'"))
+    if "-" in t:
+        return "-".join(p.capitalize() for p in t.split("-"))
+    return t.capitalize()
+
+
+def canonical_politician_name(raw: str) -> str:
+    """
+    Return a canonical 'First [Middle...] Last' form with honorifics stripped,
+    single-letter initials dropped, and duplicate-adjacent tokens collapsed.
+    """
+    if not raw:
         return ""
-    n = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
-    n = n.lower()
-    n = re.sub(r"\b(mr|mrs|ms|dr|hon|rep|sen|representative|senator)\.?\b", "", n)
-    # Drop suffixes
-    n = re.sub(r"\b(jr|sr|ii|iii|iv)\.?\b", "", n)
-    # Drop middle initials
-    n = re.sub(r"\b[a-z]\.\s", " ", n)
-    n = re.sub(r"\s+", " ", n).strip()
-    return n
+    n = unicodedata.normalize("NFKD", raw).encode("ascii", "ignore").decode()
+    tokens = _NAME_TOKEN_RE.findall(n)
+
+    cleaned = []
+    for tok in tokens:
+        low = tok.lower().rstrip(".")
+        if low in _HONORIFICS or low in _SUFFIXES:
+            continue
+        # Drop single-letter tokens (middle initials with or without period)
+        if len(low) <= 1:
+            continue
+        cleaned.append(tok.rstrip("."))
+
+    # Dedupe consecutive duplicate tokens (handles "Scott Scott Franklin")
+    deduped = []
+    for tok in cleaned:
+        if deduped and deduped[-1].lower() == tok.lower():
+            continue
+        deduped.append(tok)
+
+    return " ".join(_title_token(t) for t in deduped)
+
+
+def normalize_name(name: str) -> str:
+    """Lowercase form of canonical name — used as the dedup key."""
+    return canonical_politician_name(name).lower()
 
 
 def normalize_transaction_type(raw: str) -> str:
@@ -469,7 +530,7 @@ def persist(conn, trades: List[Dict], dry_run: bool = False) -> Tuple[int, int]:
         try:
             db.upsert_trade(
                 conn,
-                politician_name=t["politician"],
+                politician_name=canonical_politician_name(t["politician"]),
                 ticker=t["ticker"],
                 trade_date=t["trade_date"],
                 transaction_type=t["transaction_type"],
