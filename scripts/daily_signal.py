@@ -382,6 +382,222 @@ def render_research_pack(
 
 
 # ---------------------------------------------------------------------------
+# Phase C writeback: parse LLM narrative JSON block → persist Stage 3 results
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+
+_JSON_FENCE_RE = _re.compile(r"```json\s*\n(\{.*?\})\s*\n```", _re.DOTALL)
+
+
+def extract_json_block(narrative_text: str) -> Optional[Dict]:
+    """
+    Find the final fenced ```json block in the narrative text, parse it,
+    and return the dict. Returns None if no block is found or parsing fails.
+
+    The prompt instructs the LLM to emit exactly one fenced JSON block at
+    the very end of the narrative. We search for all ```json ... ``` blocks
+    and take the LAST one, so any example blocks earlier in the prompt
+    or in the LLM's commentary don't confuse us.
+    """
+    matches = _JSON_FENCE_RE.findall(narrative_text)
+    if not matches:
+        return None
+    for block in reversed(matches):
+        try:
+            parsed = json.loads(block)
+            if isinstance(parsed, dict) and "trades" in parsed:
+                return parsed
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+def apply_llm_writeback(
+    conn,
+    narrative_path: str,
+    dry_run: bool = False,
+) -> Dict:
+    """
+    Read the LLM narrative from disk, extract the fenced JSON block, and
+    persist Stage 3 results + final tier assignments back to the DB.
+
+    For each trade entry in the JSON block:
+      1. Look up the trade's Phase A scoring result to get Stage 1, 2, 4
+         values (query trades + trade_diagnostics)
+      2. Call pipeline.assemble_final_tier() with the LLM's Stage 3
+         forward_catalyst result to compute the canonical tier
+      3. Update trades.final_signal_tier + forward_catalyst columns
+      4. Update trade_diagnostics with the legislative_event_* and
+         news_catalyst_* fields if the LLM surfaced a past catalyst
+      5. Upsert a row into recommendations with thesis + bear_case +
+         the conceptual options structure (if one was suggested)
+
+    Returns a dict summary: {parsed, applied, strong_count, errors}.
+    If dry_run is set, the function still parses the JSON and reports
+    what it WOULD do but doesn't write to the DB.
+    """
+    summary: Dict = {
+        "parsed": False,
+        "applied": 0,
+        "strong_count": 0,
+        "base_count": 0,
+        "moderate_count": 0,
+        "skip_count": 0,
+        "errors": [],
+    }
+
+    try:
+        with open(narrative_path) as f:
+            narrative = f.read()
+    except OSError as e:
+        summary["errors"].append(f"read failed: {e}")
+        return summary
+
+    parsed = extract_json_block(narrative)
+    if not parsed:
+        summary["errors"].append("no valid fenced JSON block found in narrative")
+        return summary
+
+    summary["parsed"] = True
+    trades = parsed.get("trades", [])
+    if not isinstance(trades, list):
+        summary["errors"].append("JSON block 'trades' field is not a list")
+        return summary
+
+    now = datetime.utcnow().isoformat()
+
+    for entry in trades:
+        if not isinstance(entry, dict):
+            continue
+        trade_id = entry.get("trade_id")
+        if trade_id is None:
+            summary["errors"].append(f"entry missing trade_id: {entry}")
+            continue
+
+        # Look up the Phase A scoring output stored on the trades row
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """SELECT id, alignment_multiplier, owd_score_a, owd_score_b,
+                          owd_total, owd_verdict, clustering_count, cross_party_cluster,
+                          final_signal_tier as phase_a_tier, transaction_type,
+                          politician_name, ticker, trade_date, trader_tag, sector
+                   FROM trades WHERE id = ?""",
+                (trade_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                summary["errors"].append(f"trade_id {trade_id} not found in DB")
+                continue
+            trade_row = dict(row)
+        except Exception as e:
+            summary["errors"].append(f"trade_id {trade_id} lookup failed: {e}")
+            continue
+
+        forward_catalyst = entry.get("forward_catalyst")
+        forward_catalyst_date = entry.get("forward_catalyst_date")
+        past_catalyst = entry.get("past_catalyst_evidence")
+        thesis = entry.get("thesis") or ""
+        bear_case = entry.get("bear_case") or ""
+        conceptual = entry.get("conceptual_play") or {}
+        llm_suggested_tier = entry.get("suggested_tier")
+
+        # Reconstruct stage dicts for assemble_final_tier
+        stage1 = {
+            "multiplier": float(trade_row.get("alignment_multiplier") or 0.3),
+            "basis": "phase-a",
+        }
+        stage2 = {
+            "verdict": trade_row.get("owd_verdict") or "open",
+            "score_total": int(trade_row.get("owd_total") or 0),
+        }
+        stage4 = {
+            "cluster_count": float(trade_row.get("clustering_count") or 0),
+            "cross_party": bool(trade_row.get("cross_party_cluster")),
+            "bumps_tier": (
+                float(trade_row.get("clustering_count") or 0) >= 3.0
+                or bool(trade_row.get("cross_party_cluster"))
+            ),
+        }
+        stage3_catalyst = None
+        if forward_catalyst:
+            stage3_catalyst = {
+                "forward_catalyst": forward_catalyst,
+                "catalyst_date": forward_catalyst_date,
+            }
+
+        tier_result = pipeline.assemble_final_tier(
+            stage1, stage2, stage3_catalyst, stage4
+        )
+        final_tier = tier_result["tier"]
+
+        # If the LLM surfaced a past catalyst that retroactively closes the
+        # window, honor the LLM's "SKIP" suggestion
+        if llm_suggested_tier == "SKIP" and past_catalyst:
+            final_tier = "SKIP"
+
+        if not dry_run:
+            try:
+                # Update trades row with Stage 3 data + final tier
+                db.update_trade_pipeline_columns(
+                    conn, trade_id,
+                    forward_catalyst=forward_catalyst,
+                    final_signal_tier=final_tier,
+                )
+
+                # If past catalyst evidence surfaced, update trade_diagnostics
+                if past_catalyst:
+                    cur.execute(
+                        """UPDATE trade_diagnostics SET
+                             legislative_event_occurred = 1,
+                             legislative_event_detail = ?
+                           WHERE trade_id = ?""",
+                        (past_catalyst, trade_id),
+                    )
+
+                # Insert into recommendations for actionable tiers
+                if final_tier in ("STRONG", "BASE"):
+                    rec = {
+                        "signal_tier": final_tier,
+                        "option_type": "conceptual",
+                        "strike": None,
+                        "expiry": conceptual.get("target_expiry_iso"),
+                        "dte": None,
+                        "delta": None,
+                        "thesis": thesis,
+                        "bear_case": bear_case,
+                        "snapshot_caveat": (
+                            f"Conceptual only (no MMD). Phase 2.3.5 will add "
+                            f"real Greeks. As of {now}."
+                        ),
+                    }
+                    # Add DTE if we can parse it from the min_dte field
+                    if conceptual.get("min_dte") and conceptual.get("max_dte"):
+                        rec["dte"] = (conceptual["min_dte"] + conceptual["max_dte"]) // 2
+                    db.upsert_recommendation(conn, trade_id, rec)
+
+                conn.commit()
+            except Exception as e:
+                summary["errors"].append(f"trade_id {trade_id} persist failed: {e}")
+                continue
+
+        # Tally
+        summary["applied"] += 1
+        if final_tier == "STRONG":
+            summary["strong_count"] += 1
+        elif final_tier == "BASE":
+            summary["base_count"] += 1
+        elif final_tier == "MODERATE":
+            summary["moderate_count"] += 1
+        else:
+            summary["skip_count"] += 1
+
+    return summary
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -397,7 +613,33 @@ def main() -> int:
                     help="Skip DB writes")
     ap.add_argument("--no-persist", action="store_true",
                     help="Skip DB persistence even outside dry-run (alias)")
+    ap.add_argument("--writeback", type=str, default=None, metavar="NARRATIVE_PATH",
+                    help="Post-LLM Phase C: parse the narrative at this path and "
+                         "persist Stage 3 results + recommendations to the DB. "
+                         "When this flag is set, all other Phase A arguments are "
+                         "ignored.")
     args = ap.parse_args()
+
+    # ---- Phase C (writeback) mode: parse LLM narrative and persist ----
+    if args.writeback:
+        conn = db.connect()
+        print(f"[daily-signal] writeback mode — reading {args.writeback}",
+              file=sys.stderr)
+        summary = apply_llm_writeback(conn, args.writeback, dry_run=args.dry_run)
+        print(f"[daily-signal] writeback: parsed={summary['parsed']}, "
+              f"applied={summary['applied']}, "
+              f"STRONG={summary['strong_count']}, "
+              f"BASE={summary['base_count']}, "
+              f"MODERATE={summary['moderate_count']}, "
+              f"SKIP={summary['skip_count']}",
+              file=sys.stderr)
+        if summary["errors"]:
+            print(f"[daily-signal] writeback errors: {len(summary['errors'])}",
+                  file=sys.stderr)
+            for err in summary["errors"][:10]:
+                print(f"  - {err}", file=sys.stderr)
+        conn.close()
+        return 0 if summary["parsed"] or summary["applied"] >= 0 else 1
 
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     today = datetime.utcnow().strftime("%Y-%m-%d")

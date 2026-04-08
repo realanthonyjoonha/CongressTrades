@@ -229,8 +229,18 @@ case "$cmd" in
     NARRATIVE_BYTES=$(wc -c < "$NARRATIVE")
     echo "[daily] Phase B complete — narrative: ${NARRATIVE_BYTES} bytes" | tee -a "$LOG"
 
-    # ---- Phase C: Format HTML and dispatch ----
-    echo "[daily] Phase C — formatting HTML and sending email..." | tee -a "$LOG"
+    # ---- Phase C1: Writeback Stage 3 results from narrative to DB ----
+    echo "[daily] Phase C1 — parsing LLM JSON block and persisting Stage 3 results..." | tee -a "$LOG"
+    set +e
+    python3 "$SCRIPTS_DIR/daily_signal.py" --writeback "$NARRATIVE" 2>&1 | tee -a "$LOG"
+    WRITEBACK_EXIT=${PIPESTATUS[0]}
+    set -e
+    if [ "$WRITEBACK_EXIT" -ne 0 ]; then
+      echo "[daily] WARN: writeback exited $WRITEBACK_EXIT — continuing to email" | tee -a "$LOG"
+    fi
+
+    # ---- Phase C2: Format HTML and dispatch ----
+    echo "[daily] Phase C2 — formatting HTML and sending email..." | tee -a "$LOG"
 
     SUBJECT=$(grep "^SUBJECT:" "$NARRATIVE" | head -1 | sed 's/^SUBJECT: *//')
     if [ -z "$SUBJECT" ]; then
@@ -239,7 +249,16 @@ case "$cmd" in
     fi
     echo "[daily] subject: $SUBJECT" | tee -a "$LOG"
 
-    grep -v "^SUBJECT:" "$NARRATIVE" | python3 "$SCRIPTS_DIR/format_report.py" > "$REPORT"
+    # Strip SUBJECT line AND fenced JSON block before formatting HTML
+    # (the JSON block is internal machinery the reader shouldn't see)
+    python3 -c "
+import re, sys
+with open('$NARRATIVE') as f:
+    text = f.read()
+text = re.sub(r'^SUBJECT:.*\n', '', text, flags=re.MULTILINE)
+text = re.sub(r'\`\`\`json\s*\n\{.*?\}\s*\n\`\`\`', '', text, flags=re.DOTALL)
+sys.stdout.write(text)
+" | python3 "$SCRIPTS_DIR/format_report.py" > "$REPORT"
     if [ ! -s "$REPORT" ]; then
       echo "[daily] ERROR: HTML report empty after format_report.py" | tee -a "$LOG"
       exit 1
@@ -268,14 +287,92 @@ case "$cmd" in
     ;;
 
   weekly)
-    echo "[$cmd] not yet wired — Phase 2.4 work. See specs/07-agents.md"
-    exit 2
+    LOG="$LOG_DIR/weekly_${TIMESTAMP}.log"
+    PACK="$TMP_DIR/weekly_${TIMESTAMP}_pack.md"
+    NARRATIVE="$TMP_DIR/weekly_${TIMESTAMP}_narrative.md"
+    REPORT="$REPORT_DIR/weekly_${TIMESTAMP}.html"
+    WEEKLY_DISTRO="${WEEKLY_DISTRO:-config/email-distro-daily.json}"
+
+    echo "[weekly] $(date) — starting Weekly Deep Research run" | tee -a "$LOG"
+    echo "[weekly] distro: $WEEKLY_DISTRO" | tee -a "$LOG"
+
+    # ---- Phase A: Python driver — aggregate + retrospective + rescore ----
+    echo "[weekly] Phase A — aggregating week + retrospective + rescore..." | tee -a "$LOG"
+    set +e
+    python3 "$SCRIPTS_DIR/weekly_deep.py" --out "$PACK" "$@" 2>&1 | tee -a "$LOG"
+    PY_EXIT=${PIPESTATUS[0]}
+    set -e
+    if [ "$PY_EXIT" -ne 0 ]; then
+      echo "[weekly] ERROR: Phase A driver exited $PY_EXIT" | tee -a "$LOG"
+      exit 1
+    fi
+    if [ ! -s "$PACK" ]; then
+      echo "[weekly] ERROR: research pack empty or missing at $PACK" | tee -a "$LOG"
+      exit 1
+    fi
+    PACK_BYTES=$(wc -c < "$PACK")
+    echo "[weekly] Phase A complete — research pack: ${PACK_BYTES} bytes" | tee -a "$LOG"
+
+    # ---- Phase B: LLM narrative + deep research (150 search budget) ----
+    echo "[weekly] Phase B — invoking Claude for deep-dive narrative..." | tee -a "$LOG"
+    DATE_DISPLAY_FMT=$(date '+%b %-d, %Y')
+    PROMPT=$(sed \
+        -e "s|{RESEARCH_PACK_PATH}|$PACK|g" \
+        -e "s|{DATE_DISPLAY}|$DATE_DISPLAY_FMT|g" \
+        "$PROMPTS_DIR/weekly_deep.md")
+    echo "$PROMPT" | claude --print --dangerously-skip-permissions \
+        > "$NARRATIVE" 2>> "$LOG" || {
+      echo "[weekly] WARN: claude exited non-zero, checking output..." | tee -a "$LOG"
+    }
+    if [ ! -s "$NARRATIVE" ]; then
+      echo "[weekly] ERROR: narrative file empty — Claude subprocess produced no output" | tee -a "$LOG"
+      exit 1
+    fi
+    if grep -qiE "invalid api key|please run /login|authentication failed" "$NARRATIVE"; then
+      echo "[weekly] ERROR: Claude auth failure detected — run 'claude login'" | tee -a "$LOG"
+      exit 1
+    fi
+    NARRATIVE_BYTES=$(wc -c < "$NARRATIVE")
+    echo "[weekly] Phase B complete — narrative: ${NARRATIVE_BYTES} bytes" | tee -a "$LOG"
+
+    # ---- Phase C: Format HTML and dispatch ----
+    # Note: weekly does not have a writeback step yet — the JSON block is
+    # informational only for v1. Phase 3 feedback loop will consume it.
+    echo "[weekly] Phase C — formatting HTML and sending email..." | tee -a "$LOG"
+
+    SUBJECT=$(grep "^SUBJECT:" "$NARRATIVE" | head -1 | sed 's/^SUBJECT: *//')
+    if [ -z "$SUBJECT" ]; then
+      SUBJECT="Weekly Deep Research — $DATE_DISPLAY"
+      echo "[weekly] WARN: no SUBJECT line found, using default: $SUBJECT" | tee -a "$LOG"
+    fi
+    echo "[weekly] subject: $SUBJECT" | tee -a "$LOG"
+
+    # Strip SUBJECT line AND fenced JSON block
+    python3 -c "
+import re, sys
+with open('$NARRATIVE') as f:
+    text = f.read()
+text = re.sub(r'^SUBJECT:.*\n', '', text, flags=re.MULTILINE)
+text = re.sub(r'\`\`\`json\s*\n\{.*?\}\s*\n\`\`\`', '', text, flags=re.DOTALL)
+sys.stdout.write(text)
+" | python3 "$SCRIPTS_DIR/format_report.py" > "$REPORT"
+    if [ ! -s "$REPORT" ]; then
+      echo "[weekly] ERROR: HTML report empty after format_report.py" | tee -a "$LOG"
+      exit 1
+    fi
+
+    python3 "$SCRIPTS_DIR/send_email.py" \
+        --subject "$SUBJECT" \
+        --html-file "$REPORT" \
+        --distro "$WEEKLY_DISTRO" 2>&1 | tee -a "$LOG"
+
+    echo "[weekly] DONE — report: $REPORT" | tee -a "$LOG"
     ;;
 
   ""|help|-h|--help)
     echo "CongressTrades Agent Runner"
     echo ""
-    echo "Phase 0 + 2.1 + 2.2 + 2.3 (active):"
+    echo "All agents active (Phase 0 + 2.1 + 2.2 + 2.3 + 2.4):"
     echo "  init-db                              Bootstrap SQLite schema"
     echo "  ingest --source house-efd --year 2025 --parse-pdfs"
     echo "  ingest --source finnhub --symbol NVDA"
@@ -283,15 +380,14 @@ case "$cmd" in
     echo "  deepdive \"Politician Name\"           Agent 4 - single-politician report"
     echo "  tracker [--dry-run] [--since DATE]   Agent 2 - daily data maintenance"
     echo "  daily [--lookback N] [--dry-run]     Agent 3 - daily signal pipeline + digest"
+    echo "  weekly [--lookback N] [--dry-run]    Agent 5 - weekly deep research + retrospective"
     echo "  db params|politicians|trades|mappings|latest-disclosure  Ad-hoc DB queries"
     echo "  db-query \"SELECT ...\"               Raw SQL"
-    echo ""
-    echo "Phase 2.4+ (planned):"
-    echo "  weekly"
     echo ""
     echo "Env vars:"
     echo "  DEEPDIVE_RECIPIENT=foo@bar.com       Override Deep-Dive email (default: admin)"
     echo "  DAILY_DISTRO=path/to/distro.json     Override Daily Signal distro (default: config/email-distro-daily.json)"
+    echo "  WEEKLY_DISTRO=path/to/distro.json    Override Weekly Deep distro (default: config/email-distro-daily.json)"
     ;;
 
   *)

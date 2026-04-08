@@ -42,23 +42,26 @@
 - ~~Real options chains, real Greeks, specific strikes~~ — Phase 2.3.5 with MMD. v1 ships conceptual options only.
 - ~~Paper-trading mark-to-market~~ — paper trading was dropped during the brainstorm revision; not in this system at all.
 
-## Agent 3 — Weekly Deep Research
+## Agent 5 — Weekly Deep Research (a.k.a. "weekly")
 **Schedule**: Sunday night
-**Purpose**: Deep analysis + performance review + parameter health
+**Purpose**: Deep analysis + price-only retrospective + forward watchlist
+**Implementation**: Phase 2.4 — `scripts/weekly_deep.py` (Phase A driver) + `prompts/weekly_deep.md` (Phase B narrative + deep web research) + `weekly` subcommand in `run-agent.sh`
 
 **Work**:
-1. Review week's flagged trades from Agent 2
-2. Pick top 5–10 for deep research (15–25 web searches per trade)
-3. Pull full live options chain + Greeks via MMD for STRONG plays
-4. Roll up paper-trading P&L: hit rates by signal tier / politician / committee / sector
-5. Identify roster members with degrading performance → recommend demotion
-6. **Run feedback loop** (see `specs/04-feedback.md`):
-   - Compute FN/FP rates, per-check correlations, sensitivity analysis
-   - Compute retroactive outcomes on filtered trades
-   - Surface parameter adjustment proposals in "Parameter Health" section
-7. Report spouse trade P&L separately
+1. Pull all trades flagged by Daily Signal in the trailing 7 days (via `db.get_weekly_flagged_trades()`)
+2. Phase A: compute price-only retrospective per trade (entry / current / SPY benchmark via yfinance), re-score each through `pipeline.score_trade` to catch state changes since the Daily Signal run, aggregate weekly rollups (by politician, sector, cluster hot list, top winners/losers)
+3. Select top 10 trades for deep LLM research (priority: STRONG > BASE > MODERATE, then cluster count, then recency)
+4. Phase B: LLM does up to 150 web searches (15/trade × 10 trades) for forward catalysts, analyst sentiment, M&A/structural factors, thesis validation; synthesizes a weekly narrative
+5. Phase C: format + dispatch via `config/email-distro-daily.json` (shared with Daily Signal; override via `WEEKLY_DISTRO` env var)
 
-**Output**: Weekly email (~5–8K words) with Parameter Health section.
+**Output**: Weekly email (4,000–8,000 words) with retrospective + deep-dive + forward watchlist.
+
+**Explicitly out of scope (do not reintroduce):**
+- ~~Paper-trading P&L rollup~~ — paper trading was dropped during the brainstorm revision; not in this system.
+- ~~Automated roster demotion~~ — demotion surfaces as observations only; user makes the call manually.
+- ~~Feedback loop / parameter recalibration~~ — Phase 3 work, separate agent.
+- ~~Live options chains + real Greeks for STRONG plays~~ — Phase 2.3.5 (MMD integration). v1 retrospective is stock-only.
+- ~~Spouse trade P&L separately~~ — inherited from paper-trading drop.
 
 ## Agent 4 — Politician Deep-Dive
 **Schedule**: On-demand

@@ -343,6 +343,54 @@ def get_latest_disclosure_date(
 # Daily Signal helpers (Phase 2.3)
 # ---------------------------------------------------------------------------
 
+def get_weekly_flagged_trades(
+    conn: sqlite3.Connection,
+    lookback_days: int = 7,
+    tiers: Optional[List[str]] = None,
+) -> List[sqlite3.Row]:
+    """
+    Pull trades flagged by the Daily Signal agent in the trailing N days.
+    Used by the Weekly Deep Research agent (Phase 2.4) to aggregate the
+    week's actionable trades.
+
+    A trade is considered "flagged" if it has a non-null final_signal_tier
+    (which means Daily Signal Phase A has scored it). The lookback window
+    matches on `last_updated` (set by update_trade_pipeline_columns),
+    which is when Daily Signal last touched the row.
+
+    Args:
+        lookback_days: trailing window in days from today
+        tiers: optional list of tier names to filter to, e.g.
+               ['STRONG', 'BASE']. Defaults to STRONG + BASE + MODERATE.
+
+    Returns: list of sqlite3.Row from trades table, sorted by
+             tier priority (STRONG first) then recency.
+    """
+    if tiers is None:
+        tiers = ["STRONG", "BASE", "MODERATE"]
+
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    placeholders = ", ".join(["?"] * len(tiers))
+    sql = f"""
+        SELECT t.* FROM trades t
+        WHERE t.final_signal_tier IN ({placeholders})
+          AND DATE(t.last_updated) >= DATE(?, ?)
+        ORDER BY
+          CASE t.final_signal_tier
+            WHEN 'STRONG'   THEN 1
+            WHEN 'BASE'     THEN 2
+            WHEN 'MODERATE' THEN 3
+            ELSE 4
+          END,
+          t.clustering_count DESC,
+          t.last_updated DESC
+    """
+    params: List = list(tiers) + [today, f"-{lookback_days} days"]
+    cur = conn.cursor()
+    cur.execute(sql, params)
+    return cur.fetchall()
+
+
 def get_overnight_trades(
     conn: sqlite3.Connection,
     lookback_days: int = 3,
