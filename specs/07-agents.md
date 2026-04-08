@@ -1,18 +1,24 @@
 # 07 — Agents & Notifications
 
-## Agent 1 — Data Maintenance
+## Agent 1 — Data Maintenance (a.k.a. "tracker")
 **Schedule**: Daily, early morning (before Agent 2)
 **Purpose**: Silent data pipeline
+**Implementation**: Phase 2.2 — `scripts/data_maintenance.py` + `tracker` subcommand in `run-agent.sh`
 
 **Work**:
-1. Pull fresh disclosures from House eFD, Capitol Trades, Finnhub
-2. Reconcile, dedupe, tag as `member_direct` / `spouse` / `dependent`
-3. Write to `trades` table
-4. Update paper-trading positions via daily mark-to-market
-5. Refresh price data for open positions
-6. Compute and cache per-stock volatility metrics (`hist_range_45d`, `realized_vol_60d`, `sector_vol_60d`) for OWD
+1. Compute incremental `--since` date from `db.get_latest_disclosure_date()` minus 7-day safety buffer (catches retroactive filings + missed runs); fall back to 30 days if DB is empty.
+2. Invoke `scripts/ingest.py --source house-efd --year YYYY --since YYYY-MM-DD --parse-pdfs` as a subprocess (default cap 200 PDFs/run).
+3. Reconcile + dedupe via existing `ingest.reconcile()` + `db.upsert_trade()` CONFLICT clause; tag as `member_direct` / `spouse` / `dependent`.
+4. Detect failures (non-zero exit, `[source] FAILED` markers, missing stats line) and dispatch admin-only alert via `send_email.py --to`.
+5. January 1–15 rollover: also pull prior year to catch late-December filings.
 
-**Output**: No email unless error. Clean DB for Agent 2.
+**Output**: Silent on success. On failure, single HTML email to admin only (`anthonyjoonha@gmail.com` by default, overridable via `--admin`).
+
+**Explicitly out of scope (do not reintroduce):**
+- ~~Paper-trading mark-to-market~~ — paper trading was dropped during the brainstorm revision; not in this system at all.
+- ~~Per-stock volatility metrics (`hist_range_45d`, `realized_vol_60d`, `sector_vol_60d`)~~ — these are only consumed by Agent 2's Stage 2 priced-in diagnostic. They will be computed alongside Stage 2 in Phase 2.3, not here. Putting them in Agent 1 creates an orphan dependency on infrastructure that doesn't yet consume them.
+- ~~Capitol Trades scraping in Python~~ — current design defers to agent prompts using WebFetch. Phase 2.3+ may revisit.
+- ~~Senate eFD~~ — deferred (Cloudflare session-cookie barrier).
 
 ## Agent 2 — Daily Signal
 **Schedule**: Weekday mornings, after Agent 1

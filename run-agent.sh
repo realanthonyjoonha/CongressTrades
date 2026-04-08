@@ -163,24 +163,46 @@ case "$cmd" in
     echo "[deepdive] DONE — report: $REPORT" | tee -a "$LOG"
     ;;
 
-  daily|weekly|tracker)
-    echo "[$cmd] not yet wired — Phase 2 work. See specs/07-agents.md"
+  tracker)
+    LOG="$LOG_DIR/tracker_${TIMESTAMP}.log"
+    echo "[tracker] $(date) — starting data maintenance run" | tee -a "$LOG"
+
+    set +e
+    python3 "$SCRIPTS_DIR/data_maintenance.py" "$@" 2>&1 | tee -a "$LOG"
+    EXIT_CODE=${PIPESTATUS[0]}
+    set -e
+
+    if [ "$EXIT_CODE" -eq 0 ]; then
+      echo "[tracker] DONE — $(date)" | tee -a "$LOG"
+    else
+      echo "[tracker] FAILED with exit $EXIT_CODE — $(date)" | tee -a "$LOG"
+      exit "$EXIT_CODE"
+    fi
+    ;;
+
+  daily|weekly)
+    echo "[$cmd] not yet wired — Phase 2.3+ work. See specs/07-agents.md"
     exit 2
     ;;
 
   ""|help|-h|--help)
     echo "CongressTrades Agent Runner"
     echo ""
-    echo "Phase 0 (active):"
-    echo "  init-db                       Bootstrap SQLite schema"
+    echo "Phase 0 + 2.1 + 2.2 (active):"
+    echo "  init-db                              Bootstrap SQLite schema"
     echo "  ingest --source house-efd --year 2025 --parse-pdfs"
     echo "  ingest --source finnhub --symbol NVDA"
     echo "  backtest [--lookback 5] [--report-only]"
-    echo "  db params|politicians|trades|mappings  Ad-hoc DB queries"
-    echo "  db-query \"SELECT ...\"         Raw SQL"
+    echo "  deepdive \"Politician Name\"           Agent 4 - single-politician report"
+    echo "  tracker [--dry-run] [--since DATE]   Agent 2 - daily data maintenance"
+    echo "  db params|politicians|trades|mappings|latest-disclosure  Ad-hoc DB queries"
+    echo "  db-query \"SELECT ...\"               Raw SQL"
     echo ""
-    echo "Phase 2 (planned):"
-    echo "  daily | weekly | deepdive | tracker"
+    echo "Phase 2.3+ (planned):"
+    echo "  daily | weekly"
+    echo ""
+    echo "Env vars:"
+    echo "  DEEPDIVE_RECIPIENT=foo@bar.com       Override Deep-Dive email (default: admin)"
     ;;
 
   *)

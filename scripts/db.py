@@ -309,6 +309,36 @@ def trades_in_window(
     return cur.fetchall()
 
 
+def get_latest_disclosure_date(
+    conn: sqlite3.Connection,
+    source: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Return the most recent disclosure_date in the trades table, optionally
+    filtered by source. Used by the Data Maintenance agent (Agent 2) to compute
+    the incremental --since window for daily ingestion.
+
+    The `source` filter does a LIKE match because the trades table merges
+    multiple sources into a single comma-separated source field during
+    reconcile() — e.g. "house_efd,finnhub". Pass "house_efd" to filter to
+    rows that include that source.
+
+    Returns ISO date string "YYYY-MM-DD" or None if no trades match.
+    """
+    cur = conn.cursor()
+    if source:
+        cur.execute(
+            "SELECT MAX(disclosure_date) FROM trades WHERE source LIKE ?",
+            (f"%{source}%",),
+        )
+    else:
+        cur.execute("SELECT MAX(disclosure_date) FROM trades")
+    row = cur.fetchone()
+    if row and row[0]:
+        return row[0]
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Committee mappings
 # ---------------------------------------------------------------------------
@@ -452,6 +482,9 @@ def main():
     mp.add_argument("--ticker")
     mp.add_argument("--sector")
 
+    ld = sub.add_parser("latest-disclosure", help="Print most recent disclosure_date in trades table")
+    ld.add_argument("--source", help="Filter by source (LIKE match), e.g. 'house_efd'")
+
     args = p.parse_args()
     if not args.cmd:
         p.print_help()
@@ -492,6 +525,12 @@ def main():
         else:
             cur.execute("SELECT sector, committee, multi_jurisdiction, ticker, rationale FROM committee_mappings ORDER BY sector, committee")
         _print_rows(cur.fetchall(), ["sector", "committee", "multi_jurisdiction", "ticker", "rationale"])
+    elif args.cmd == "latest-disclosure":
+        latest = get_latest_disclosure_date(conn, source=args.source)
+        if latest is None:
+            print("(no trades in DB)")
+        else:
+            print(latest)
 
     conn.close()
 
