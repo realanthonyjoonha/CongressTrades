@@ -388,6 +388,45 @@ def compute_sector_metrics(sector_tag: Optional[str], trade_date: str) -> Dict:
 # Top-level orchestrator
 # ---------------------------------------------------------------------------
 
+def get_next_earnings(ticker: str) -> Optional[Dict]:
+    """
+    Fetch the next earnings date + analyst estimates via yfinance.
+    Returns dict {next_earnings_date, eps_avg, eps_high, eps_low,
+    revenue_avg} or None if unavailable.
+
+    Uses yfinance Ticker.calendar (NOT earnings_dates which requires lxml).
+    The calendar shows ONE upcoming earnings date — for past earnings
+    history we'd need a different source. For Phase 2.3.5 the next-only
+    view is enough: it feeds into Stage 3 forward catalyst identification
+    and into the options layer's DTE selection.
+    """
+    if not HAS_YF:
+        return None
+    try:
+        t = yf.Ticker(ticker)
+        cal = t.calendar
+        if not cal:
+            return None
+        earnings_dates = cal.get("Earnings Date") or []
+        if not earnings_dates:
+            return None
+        next_date = earnings_dates[0]
+        # yfinance returns datetime.date objects; convert to ISO string
+        if hasattr(next_date, "isoformat"):
+            next_date = next_date.isoformat()
+        return {
+            "next_earnings_date": next_date,
+            "eps_avg": cal.get("Earnings Average"),
+            "eps_high": cal.get("Earnings High"),
+            "eps_low": cal.get("Earnings Low"),
+            "revenue_avg": cal.get("Revenue Average"),
+        }
+    except Exception as e:
+        print(f"  [stock_metrics] earnings calendar fetch failed for {ticker}: {e}",
+              file=sys.stderr)
+        return None
+
+
 def compute_metrics_for_trade(
     ticker: str,
     sector: Optional[str],
@@ -455,10 +494,20 @@ def compute_metrics_for_trade(
     out.update(sector_data)
 
     # MMD-deferred fields (Phase 2.3.5 will populate these)
-    out["iv_percentile_current"] = None  # MMD only
-    out["iv_range_12m"] = None  # MMD only
-    out["implied_earnings_move"] = None  # MMD only
-    out["next_earnings_date"] = None  # MMD only
+    out["iv_percentile_current"] = None  # requires historical IV cache (Phase 3)
+    out["iv_range_12m"] = None  # requires historical IV cache (Phase 3)
+    out["implied_earnings_move"] = None  # requires options snapshot (paid MMD tier)
+
+    # Earnings calendar (Phase 2.3.5: yfinance, free)
+    earnings = get_next_earnings(ticker)
+    if earnings:
+        out["next_earnings_date"] = earnings.get("next_earnings_date")
+        out["next_earnings_eps_avg"] = earnings.get("eps_avg")
+        out["next_earnings_eps_high"] = earnings.get("eps_high")
+        out["next_earnings_eps_low"] = earnings.get("eps_low")
+        out["next_earnings_revenue_avg"] = earnings.get("revenue_avg")
+    else:
+        out["next_earnings_date"] = None
 
     return out
 

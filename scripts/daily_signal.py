@@ -342,6 +342,19 @@ def render_research_pack(
         if s2.get("skipped_checks"):
             lines.append(f"- *skipped checks (MMD-deferred):* {len(s2['skipped_checks'])}")
 
+        # Earnings calendar (Phase 2.3.5)
+        next_earnings = metrics.get("next_earnings_date")
+        if next_earnings:
+            lines.append(f"\n**Next earnings:** {next_earnings}")
+            eps_avg = metrics.get("next_earnings_eps_avg")
+            if eps_avg:
+                lines.append(f"- analyst EPS estimate: ${eps_avg:.2f} "
+                             f"(range ${metrics.get('next_earnings_eps_low', 0):.2f}–"
+                             f"${metrics.get('next_earnings_eps_high', 0):.2f})")
+            lines.append("- *Stage 3: incorporate this date into your forward "
+                         "catalyst search; the options layer below has already "
+                         "used it for DTE selection.*")
+
         lines.append("\n**Stage 4 — Clustering**")
         lines.append(f"- cluster_count: {s4.get('cluster_count')} "
                      f"({s4.get('member_count')} member, {s4.get('spouse_count')} spouse)")
@@ -352,6 +365,57 @@ def render_research_pack(
             lines.append(f"- other politicians in window: {', '.join(other_pols)}")
         if s4.get("same_sector_count"):
             lines.append(f"- *same-sector buys (broader context):* {s4['same_sector_count']}")
+
+        # ---- Phase 2.3.5: Real options strike for STRONG/BASE pre-tiers ----
+        pre_tier = s.get("tier_pre_stage3", "MODERATE")
+        if pre_tier in ("STRONG", "BASE"):
+            lines.append("\n**Real-chain options pick (Phase 2.3.5):**")
+            try:
+                import options_chain
+                # Use earnings date as catalyst if we have one and it's
+                # within a reasonable forward window. Otherwise let the
+                # picker use its default DTE window.
+                catalyst_date = next_earnings if next_earnings else None
+                has_catalyst = bool(catalyst_date)
+                pick = options_chain.best_strike_for_trade(
+                    ticker=t.get("ticker"),
+                    signal_tier=pre_tier,
+                    has_catalyst=has_catalyst,
+                    catalyst_date=catalyst_date,
+                    today=today,
+                    transaction_type=(t.get("transaction_type") or "buy"),
+                )
+                if pick.get("mode") == "real":
+                    lines.append(f"- structure: **{pick['structure']}** "
+                                 f"strike ${pick['strike']}, expiry {pick['expiry']} "
+                                 f"({pick['dte']} DTE)")
+                    lines.append(f"- delta: {pick['delta']:.2f} "
+                                 f"(target {pick['target_delta']:.2f}, "
+                                 f"error {pick['delta_error']:.2f})")
+                    lines.append(f"- IV: {pick['iv']*100:.1f}% "
+                                 f"(computed via inverse BS from lastPrice)")
+                    lines.append(f"- gamma: {pick['gamma']:.4f}, "
+                                 f"theta: {pick['theta']:+.3f}/day, "
+                                 f"vega: {pick['vega']:.3f}")
+                    if pick.get("bid", 0) > 0 and pick.get("ask", 0) > 0:
+                        lines.append(f"- bid/ask: ${pick['bid']:.2f} / ${pick['ask']:.2f} "
+                                     f"(mid ${pick['mid']:.2f})")
+                    else:
+                        lines.append(f"- last: ${pick.get('lastPrice', 0):.2f} "
+                                     f"(off-hours; bid/ask stale)")
+                    lines.append(f"- volume: {pick.get('volume', 0)}, "
+                                 f"OI: {pick.get('openInterest', 0)}")
+                    lines.append(f"- contract: `{pick.get('contractSymbol', '')}`")
+                    if pick.get("iv_warning"):
+                        lines.append(f"- ⚠️ {pick['iv_warning']}")
+                    lines.append(f"- *{pick.get('snapshot_caveat', '')}*")
+                else:
+                    lines.append(f"- *real-chain unavailable: "
+                                 f"{pick.get('fallback_reason', 'unknown')}*")
+                    lines.append(f"- conceptual fallback: {pick.get('structure')} "
+                                 f"delta {pick.get('delta_target')} DTE {pick.get('dte_window')}")
+            except Exception as e:
+                lines.append(f"- *options layer error: {e}*")
 
         lines.append(f"\n**Pre-Stage-3 tier:** `{s.get('tier_pre_stage3')}` "
                      f"({s.get('tier_pre_stage3_reason')})")
