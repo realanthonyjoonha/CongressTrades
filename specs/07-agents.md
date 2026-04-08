@@ -20,21 +20,27 @@
 - ~~Capitol Trades scraping in Python~~ — current design defers to agent prompts using WebFetch. Phase 2.3+ may revisit.
 - ~~Senate eFD~~ — deferred (Cloudflare session-cookie barrier).
 
-## Agent 2 — Daily Signal
+## Agent 2 — Daily Signal (a.k.a. "daily")
 **Schedule**: Weekday mornings, after Agent 1
 **Purpose**: Score overnight disclosures, generate recommendations
+**Implementation**: Phase 2.3 — `scripts/daily_signal.py` (Phase A driver) + `scripts/pipeline.py` (4-stage scoring engine) + `scripts/stock_metrics.py` (yfinance metrics) + `scripts/options_concept.py` (conceptual options) + `prompts/daily_signal.md` (Phase B narrative + Stage 3 catalyst search) + `daily` subcommand in `run-agent.sh`
 
 **Work**:
-1. Read overnight trades from DB
-2. Run full pipeline (Stages 1–4), log all raw values to `trade_diagnostics`
-3. Research forward catalysts via web search (5–10 searches per trade)
-4. For high-profile spouse trades: media coverage detection search
-5. Call options module (shared code) for plays
-6. Write recommendations to `recommendations` table
-7. Compose daily digest email
-8. Fire instant `[STRONG SIGNAL]` email if any STRONG-tier play produced
+1. Read overnight trades from DB via `db.get_overnight_trades()` (3-day rolling window, idempotent — already-scored trades skipped)
+2. Phase A: Run Stages 1, 2 (Lite), and 4 deterministically per trade; persist to `trade_diagnostics` and the trades table's denormalized columns
+3. Phase B: LLM does 5–10 web searches per surviving trade (80 max total) for forward catalysts (90-day window), then synthesizes a daily digest narrative
+4. LLM emits a fenced JSON block at the end of the narrative with Stage 3 results + suggested final tiers; the runner parses it and writes back to the DB
+5. Phase C: format HTML, dispatch daily digest via `config/email-distro-daily.json`
+6. If any STRONG-tier play in the narrative subject line, fire a second `[STRONG SIGNAL]` email immediately
 
-**Output**: Daily digest + potential instant STRONG alerts via Resend.
+**Output**: Daily digest + potential instant STRONG alerts via Resend (admin-only by default; user edits `config/email-distro-daily.json` to add production daily distro).
+
+**Stage 2 status**: Currently runs in **"Lite" mode** — 5 of 8 OWD checks. The two MMD-dependent checks (A3 IV expansion, B1 implied earnings move) will be added in Phase 2.3.5 when MMD is wired. Same thresholds; v1 is more conservative (under-flag rather than over-flag).
+
+**Explicitly out of scope (do not reintroduce):**
+- ~~Spouse trade media-coverage detection~~ — was item 4 in the original spec. Out of v1; revisit in Phase 3 if false-positive rates from spouse trades are too high.
+- ~~Real options chains, real Greeks, specific strikes~~ — Phase 2.3.5 with MMD. v1 ships conceptual options only.
+- ~~Paper-trading mark-to-market~~ — paper trading was dropped during the brainstorm revision; not in this system at all.
 
 ## Agent 3 — Weekly Deep Research
 **Schedule**: Sunday night

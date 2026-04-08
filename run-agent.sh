@@ -180,29 +180,118 @@ case "$cmd" in
     fi
     ;;
 
-  daily|weekly)
-    echo "[$cmd] not yet wired — Phase 2.3+ work. See specs/07-agents.md"
+  daily)
+    LOG="$LOG_DIR/daily_${TIMESTAMP}.log"
+    PACK="$TMP_DIR/daily_${TIMESTAMP}_pack.md"
+    NARRATIVE="$TMP_DIR/daily_${TIMESTAMP}_narrative.md"
+    REPORT="$REPORT_DIR/daily_${TIMESTAMP}.html"
+    DAILY_DISTRO="${DAILY_DISTRO:-config/email-distro-daily.json}"
+
+    echo "[daily] $(date) — starting Daily Signal run" | tee -a "$LOG"
+    echo "[daily] distro: $DAILY_DISTRO" | tee -a "$LOG"
+
+    # ---- Phase A: Python deterministic driver ----
+    echo "[daily] Phase A — running deterministic pipeline (Stages 1, 2, 4)..." | tee -a "$LOG"
+    set +e
+    python3 "$SCRIPTS_DIR/daily_signal.py" --out "$PACK" "$@" 2>&1 | tee -a "$LOG"
+    PY_EXIT=${PIPESTATUS[0]}
+    set -e
+    if [ "$PY_EXIT" -ne 0 ]; then
+      echo "[daily] ERROR: Phase A driver exited $PY_EXIT" | tee -a "$LOG"
+      exit 1
+    fi
+    if [ ! -s "$PACK" ]; then
+      echo "[daily] ERROR: research pack empty or missing at $PACK" | tee -a "$LOG"
+      exit 1
+    fi
+    PACK_BYTES=$(wc -c < "$PACK")
+    echo "[daily] Phase A complete — research pack: ${PACK_BYTES} bytes" | tee -a "$LOG"
+
+    # ---- Phase B: LLM narrative + Stage 3 catalyst search ----
+    echo "[daily] Phase B — invoking Claude for narrative + Stage 3 catalysts..." | tee -a "$LOG"
+    DATE_DISPLAY_FMT=$(date '+%b %-d, %Y')
+    PROMPT=$(sed \
+        -e "s|{RESEARCH_PACK_PATH}|$PACK|g" \
+        -e "s|{DATE_DISPLAY}|$DATE_DISPLAY_FMT|g" \
+        "$PROMPTS_DIR/daily_signal.md")
+    echo "$PROMPT" | claude --print --dangerously-skip-permissions \
+        > "$NARRATIVE" 2>> "$LOG" || {
+      echo "[daily] WARN: claude exited non-zero, checking output..." | tee -a "$LOG"
+    }
+    if [ ! -s "$NARRATIVE" ]; then
+      echo "[daily] ERROR: narrative file empty — Claude subprocess produced no output" | tee -a "$LOG"
+      exit 1
+    fi
+    if grep -qiE "invalid api key|please run /login|authentication failed" "$NARRATIVE"; then
+      echo "[daily] ERROR: Claude auth failure detected — run 'claude login'" | tee -a "$LOG"
+      exit 1
+    fi
+    NARRATIVE_BYTES=$(wc -c < "$NARRATIVE")
+    echo "[daily] Phase B complete — narrative: ${NARRATIVE_BYTES} bytes" | tee -a "$LOG"
+
+    # ---- Phase C: Format HTML and dispatch ----
+    echo "[daily] Phase C — formatting HTML and sending email..." | tee -a "$LOG"
+
+    SUBJECT=$(grep "^SUBJECT:" "$NARRATIVE" | head -1 | sed 's/^SUBJECT: *//')
+    if [ -z "$SUBJECT" ]; then
+      SUBJECT="Daily Signal — $DATE_DISPLAY"
+      echo "[daily] WARN: no SUBJECT line found, using default: $SUBJECT" | tee -a "$LOG"
+    fi
+    echo "[daily] subject: $SUBJECT" | tee -a "$LOG"
+
+    grep -v "^SUBJECT:" "$NARRATIVE" | python3 "$SCRIPTS_DIR/format_report.py" > "$REPORT"
+    if [ ! -s "$REPORT" ]; then
+      echo "[daily] ERROR: HTML report empty after format_report.py" | tee -a "$LOG"
+      exit 1
+    fi
+
+    python3 "$SCRIPTS_DIR/send_email.py" \
+        --subject "$SUBJECT" \
+        --html-file "$REPORT" \
+        --distro "$DAILY_DISTRO" 2>&1 | tee -a "$LOG"
+
+    # ---- Instant STRONG-tier alert ----
+    # If the narrative mentions any STRONG plays, fire a second email with
+    # an urgent prefix. We use a simple grep on the SUBJECT line which has
+    # the "N STRONG / ..." breakdown — if the count is > 0, send the alert.
+    STRONG_COUNT=$(echo "$SUBJECT" | grep -oE "[0-9]+ STRONG" | head -1 | grep -oE "[0-9]+" || echo "0")
+    if [ "$STRONG_COUNT" -gt "0" ] 2>/dev/null; then
+      ALERT_SUBJECT="[STRONG SIGNAL] $STRONG_COUNT plays — $DATE_DISPLAY_FMT"
+      echo "[daily] $STRONG_COUNT STRONG plays detected — dispatching instant alert" | tee -a "$LOG"
+      python3 "$SCRIPTS_DIR/send_email.py" \
+          --subject "$ALERT_SUBJECT" \
+          --html-file "$REPORT" \
+          --distro "$DAILY_DISTRO" 2>&1 | tee -a "$LOG"
+    fi
+
+    echo "[daily] DONE — report: $REPORT" | tee -a "$LOG"
+    ;;
+
+  weekly)
+    echo "[$cmd] not yet wired — Phase 2.4 work. See specs/07-agents.md"
     exit 2
     ;;
 
   ""|help|-h|--help)
     echo "CongressTrades Agent Runner"
     echo ""
-    echo "Phase 0 + 2.1 + 2.2 (active):"
+    echo "Phase 0 + 2.1 + 2.2 + 2.3 (active):"
     echo "  init-db                              Bootstrap SQLite schema"
     echo "  ingest --source house-efd --year 2025 --parse-pdfs"
     echo "  ingest --source finnhub --symbol NVDA"
     echo "  backtest [--lookback 5] [--report-only]"
     echo "  deepdive \"Politician Name\"           Agent 4 - single-politician report"
     echo "  tracker [--dry-run] [--since DATE]   Agent 2 - daily data maintenance"
+    echo "  daily [--lookback N] [--dry-run]     Agent 3 - daily signal pipeline + digest"
     echo "  db params|politicians|trades|mappings|latest-disclosure  Ad-hoc DB queries"
     echo "  db-query \"SELECT ...\"               Raw SQL"
     echo ""
-    echo "Phase 2.3+ (planned):"
-    echo "  daily | weekly"
+    echo "Phase 2.4+ (planned):"
+    echo "  weekly"
     echo ""
     echo "Env vars:"
     echo "  DEEPDIVE_RECIPIENT=foo@bar.com       Override Deep-Dive email (default: admin)"
+    echo "  DAILY_DISTRO=path/to/distro.json     Override Daily Signal distro (default: config/email-distro-daily.json)"
     ;;
 
   *)

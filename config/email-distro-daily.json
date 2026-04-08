@@ -1,0 +1,8 @@
+{
+  "distro_name": "Congress Trades Daily Signal",
+  "comment": "Phase 2.3 starts admin-only. User edits this file to add daily-distro recipients before going live. Keep this distro narrower than email-distro.json.",
+  "recipients": [
+    "anthonyjoonha@gmail.com"
+  ],
+  "reply_to": "anthonyjoonha@gmail.com"
+}

@@ -340,6 +340,217 @@ def get_latest_disclosure_date(
 
 
 # ---------------------------------------------------------------------------
+# Daily Signal helpers (Phase 2.3)
+# ---------------------------------------------------------------------------
+
+def get_overnight_trades(
+    conn: sqlite3.Connection,
+    lookback_days: int = 3,
+    only_buys: bool = True,
+    exclude_dependent: bool = True,
+) -> List[sqlite3.Row]:
+    """
+    Pull trades disclosed in the trailing N days that have NOT yet been
+    scored (i.e., not present in the recommendations table).
+
+    Used by the Daily Signal agent to find "overnight disclosures" each
+    morning. Lookback of 3 days catches Friday/Sat/Sun rollover when the
+    agent runs Monday morning.
+
+    The exclusion against `recommendations` makes the operation idempotent:
+    re-running the same day pulls 0 trades since they're already scored.
+
+    Args:
+        lookback_days: trailing window in days from today
+        only_buys: filter to transaction_type='buy' only
+        exclude_dependent: filter out trader_tag='dependent' (per spec, those
+                          are logged but not scored)
+
+    Returns: list of sqlite3.Row from trades table.
+    """
+    cur = conn.cursor()
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    sql = """
+        SELECT t.* FROM trades t
+        WHERE t.disclosure_date IS NOT NULL
+          AND DATE(t.disclosure_date) >= DATE(?, ?)
+          AND DATE(t.disclosure_date) <= DATE(?)
+          AND t.id NOT IN (SELECT trade_id FROM recommendations WHERE trade_id IS NOT NULL)
+    """
+    params: List = [today, f"-{lookback_days} days", today]
+    if only_buys:
+        sql += " AND t.transaction_type = 'buy'"
+    if exclude_dependent:
+        sql += " AND (t.trader_tag IS NULL OR t.trader_tag != 'dependent')"
+    sql += " ORDER BY t.disclosure_date DESC, t.trade_date DESC"
+    cur.execute(sql, params)
+    return cur.fetchall()
+
+
+def upsert_trade_diagnostics(
+    conn: sqlite3.Connection,
+    trade_id: int,
+    diagnostics: Dict,
+) -> int:
+    """
+    Idempotent insert/update on trade_diagnostics keyed by trade_id.
+    Replaces any existing row for that trade_id (last write wins).
+
+    diagnostics dict can include any of the columns defined in db_init.py
+    SCHEMA for trade_diagnostics. Missing keys are written as NULL.
+    """
+    cur = conn.cursor()
+    # Delete any existing row for this trade
+    cur.execute("DELETE FROM trade_diagnostics WHERE trade_id = ?", (trade_id,))
+
+    # Build the column list dynamically from the diagnostics dict, but only
+    # include columns that actually exist in the schema. We hard-code the
+    # known column list to avoid surprises.
+    schema_cols = [
+        "trade_id",
+        "hist_range_45d", "realized_vol_60d", "sigma_move_val",
+        "actual_price_move", "rsi", "iv_percentile", "iv_expansion",
+        "volume_spike_detected",
+        "earnings_occurred", "actual_earnings_move", "implied_earnings_move",
+        "legislative_event_occurred", "legislative_event_detail",
+        "news_catalyst_fired", "news_day_move",
+        "sector_etf_move", "sector_vol_60d",
+        "threshold_a1", "threshold_a2", "threshold_a3",
+        "threshold_b1", "threshold_b3", "threshold_b4",
+        "checks_fired", "verdict",
+        "outcome_type", "outcome_pnl_30d", "outcome_pnl_60d", "outcome_pnl_90d",
+        "evaluated_at",
+    ]
+    values = []
+    placeholders = []
+    cols = []
+    for col in schema_cols:
+        if col == "trade_id":
+            cols.append(col)
+            placeholders.append("?")
+            values.append(trade_id)
+        elif col in diagnostics:
+            cols.append(col)
+            placeholders.append("?")
+            v = diagnostics[col]
+            # JSON-serialize lists/dicts
+            if isinstance(v, (list, dict)):
+                v = json.dumps(v)
+            values.append(v)
+
+    if "evaluated_at" not in diagnostics:
+        cols.append("evaluated_at")
+        placeholders.append("?")
+        values.append(now_iso())
+
+    sql = f"INSERT INTO trade_diagnostics ({', '.join(cols)}) VALUES ({', '.join(placeholders)})"
+    cur.execute(sql, values)
+    conn.commit()
+    return cur.lastrowid or -1
+
+
+def upsert_recommendation(
+    conn: sqlite3.Connection,
+    trade_id: int,
+    rec: Dict,
+) -> int:
+    """
+    Idempotent insert/update on recommendations keyed by trade_id.
+    Replaces any existing recommendation for the trade.
+
+    rec dict columns (any subset):
+        signal_tier, option_type, strike, expiry, dte,
+        delta, gamma, theta, vega, iv,
+        bid, ask, mid,
+        entry_timestamp, thesis, bear_case, snapshot_caveat
+    """
+    cur = conn.cursor()
+    cur.execute("DELETE FROM recommendations WHERE trade_id = ?", (trade_id,))
+
+    schema_cols = [
+        "trade_id",
+        "signal_tier", "option_type", "strike", "expiry", "dte",
+        "delta", "gamma", "theta", "vega", "iv",
+        "bid", "ask", "mid",
+        "entry_timestamp", "thesis", "bear_case", "snapshot_caveat",
+    ]
+    values = []
+    placeholders = []
+    cols = []
+    for col in schema_cols:
+        if col == "trade_id":
+            cols.append(col)
+            placeholders.append("?")
+            values.append(trade_id)
+        elif col in rec:
+            cols.append(col)
+            placeholders.append("?")
+            values.append(rec[col])
+
+    if "entry_timestamp" not in rec:
+        cols.append("entry_timestamp")
+        placeholders.append("?")
+        values.append(now_iso())
+
+    sql = f"INSERT INTO recommendations ({', '.join(cols)}) VALUES ({', '.join(placeholders)})"
+    cur.execute(sql, values)
+    conn.commit()
+    return cur.lastrowid or -1
+
+
+def update_trade_pipeline_columns(
+    conn: sqlite3.Connection,
+    trade_id: int,
+    alignment_multiplier: Optional[float] = None,
+    owd_score_a: Optional[int] = None,
+    owd_score_b: Optional[int] = None,
+    owd_total: Optional[int] = None,
+    owd_verdict: Optional[str] = None,
+    forward_catalyst: Optional[str] = None,
+    clustering_count: Optional[int] = None,
+    cross_party_cluster: Optional[int] = None,
+    final_signal_tier: Optional[str] = None,
+    skip_reason: Optional[str] = None,
+) -> None:
+    """
+    Update the denormalized pipeline-output columns on a trades row.
+    Called by daily_signal.py after scoring a trade so other agents
+    (Deep-Dive, Weekly Deep) can read tier info directly from trades.
+    """
+    updates = {}
+    if alignment_multiplier is not None:
+        updates["alignment_multiplier"] = alignment_multiplier
+    if owd_score_a is not None:
+        updates["owd_score_a"] = owd_score_a
+    if owd_score_b is not None:
+        updates["owd_score_b"] = owd_score_b
+    if owd_total is not None:
+        updates["owd_total"] = owd_total
+    if owd_verdict is not None:
+        updates["owd_verdict"] = owd_verdict
+    if forward_catalyst is not None:
+        updates["forward_catalyst"] = forward_catalyst
+    if clustering_count is not None:
+        updates["clustering_count"] = clustering_count
+    if cross_party_cluster is not None:
+        updates["cross_party_cluster"] = cross_party_cluster
+    if final_signal_tier is not None:
+        updates["final_signal_tier"] = final_signal_tier
+    if skip_reason is not None:
+        updates["skip_reason"] = skip_reason
+
+    if not updates:
+        return
+
+    set_clause = ", ".join(f"{k} = ?" for k in updates.keys())
+    set_clause += ", last_updated = ?"
+    values = list(updates.values()) + [now_iso(), trade_id]
+    cur = conn.cursor()
+    cur.execute(f"UPDATE trades SET {set_clause} WHERE id = ?", values)
+    conn.commit()
+
+
+# ---------------------------------------------------------------------------
 # Committee mappings
 # ---------------------------------------------------------------------------
 

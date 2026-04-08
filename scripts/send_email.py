@@ -5,14 +5,19 @@ Send HTML email via Resend API — sends individually to each recipient for inst
 CLI (backward-compatible positional form):
     python3 send_email.py "Subject" /path/to/report.html
 
-CLI (flag form, also supports --to for single-recipient override):
+CLI (flag form, also supports --to and --distro overrides):
     python3 send_email.py --subject "Subject" --html-file /path/to/report.html
     python3 send_email.py --subject "Subject" --html-file report.html --to me@example.com
     python3 send_email.py --subject "Subject" --html-file report.html --to a@x.com,b@y.com
+    python3 send_email.py --subject "Subject" --html-file report.html --distro config/email-distro-daily.json
 
---to overrides config/email-distro.json entirely. Use it for admin-only
-alerts, single-politician deep-dives, or any delivery that shouldn't go
-to the full distro.
+--to overrides the recipients list entirely with a single email or
+comma-separated list. Use it for admin-only alerts and single-politician
+deep-dives.
+
+--distro points at an alternate distro JSON file (same shape as
+config/email-distro.json). Use it for the Daily Signal agent's smaller
+daily-distro list. Mutually exclusive with --to (--to wins if both are set).
 """
 import argparse
 import json
@@ -23,13 +28,15 @@ import urllib.error
 import time
 
 
-def send_email(subject, html_body=None, html_file=None, to_override=None):
+def send_email(subject, html_body=None, html_file=None, to_override=None, distro_path=None):
     """
     Send one email per recipient via Resend.
 
     to_override: optional list of email addresses. When provided, overrides
-                 the recipients list in config/email-distro.json entirely.
-                 Use for admin-only alerts and on-demand reports.
+                 the recipients list entirely. Use for admin-only alerts.
+    distro_path: optional path to an alternate distro JSON file (same shape
+                 as config/email-distro.json). Used by the Daily Signal
+                 agent's smaller daily distro. Ignored if to_override is set.
     """
     if html_file and os.path.exists(html_file):
         with open(html_file) as f:
@@ -39,13 +46,27 @@ def send_email(subject, html_body=None, html_file=None, to_override=None):
         print("Error: No HTML content provided")
         return False
 
-    config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'email-distro.json')
+    # Resolve config: --distro path > default config/email-distro.json
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if distro_path:
+        config_path = distro_path if os.path.isabs(distro_path) else os.path.join(base_dir, distro_path)
+    else:
+        config_path = os.path.join(base_dir, 'config', 'email-distro.json')
+
+    if not os.path.exists(config_path):
+        print(f"Error: distro file not found: {config_path}")
+        return False
+
     with open(config_path) as f:
         config = json.load(f)
 
     if to_override:
         recipients = to_override
         print(f"  [send_email] --to override: {len(recipients)} recipient(s)")
+    elif distro_path:
+        recipients = config['recipients']
+        print(f"  [send_email] --distro {os.path.basename(config_path)}: "
+              f"{len(recipients)} recipient(s)")
     else:
         recipients = config['recipients']
     sender = config['reply_to']
@@ -110,12 +131,15 @@ if __name__ == '__main__':
         ap.add_argument("--html", dest="html_body")
         ap.add_argument("--to", dest="to_override",
                         help="Override distro: single email or comma-separated list")
+        ap.add_argument("--distro", dest="distro_path",
+                        help="Alternate distro JSON file (e.g. config/email-distro-daily.json)")
         args = ap.parse_args()
         ok = send_email(
             args.subject,
             html_body=args.html_body,
             html_file=args.html_file,
             to_override=_parse_to_list(args.to_override),
+            distro_path=args.distro_path,
         )
         sys.exit(0 if ok else 1)
 
