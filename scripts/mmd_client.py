@@ -135,18 +135,47 @@ class MMDClient:
         except urllib.error.URLError as e:
             raise MMDError(f"MMD URL error on {path}: {e.reason}")
 
-    def _parse_csv(self, body: str) -> List[Dict[str, str]]:
-        """Parse a CSV response body into a list of row dicts."""
+    def _parse_response(self, body: str) -> List[Dict]:
+        """
+        Parse an MMD response body. Handles both JSON and CSV formats:
+        - Direct API calls (with apiKey param) return JSON with a
+          `results` array
+        - The MCP wrapper returns CSV
+
+        Normalizes all dict keys to lowercase for consistent access.
+        """
         if not body or not body.strip():
             return []
-        # MMD sometimes appends a "Next page available..." note after CSV.
-        # Strip everything after the first blank line.
+
+        body_stripped = body.strip()
+
+        # ---- JSON path (direct API) ----
+        # Do NOT lowercase JSON keys — the aggregates endpoints have both
+        # "T" (ticker symbol) and "t" (timestamp ms), and lowercasing
+        # causes a key collision. JSON keys are used as-is; the accessor
+        # code in each method handles both casing patterns.
+        if body_stripped.startswith("{") or body_stripped.startswith("["):
+            try:
+                parsed = json.loads(body_stripped)
+                if isinstance(parsed, dict):
+                    results = parsed.get("results", [])
+                    if isinstance(results, list):
+                        return [item for item in results if isinstance(item, dict)]
+                    return [parsed]
+                if isinstance(parsed, list):
+                    return [item for item in parsed if isinstance(item, dict)]
+            except json.JSONDecodeError:
+                pass  # Fall through to CSV
+
+        # ---- CSV path (MCP wrapper) ----
         lines = body.split("\n")
         csv_lines: List[str] = []
         for line in lines:
             if not line.strip() and csv_lines:
                 break
             csv_lines.append(line)
+        if csv_lines:
+            csv_lines[0] = csv_lines[0].lower()
         reader = csv.DictReader(io.StringIO("\n".join(csv_lines)))
         return list(reader)
 
@@ -178,7 +207,7 @@ class MMDClient:
             print(f"  [mmd] get_stock_aggregates({ticker}) failed: {e}", file=sys.stderr)
             return []
 
-        rows = self._parse_csv(body)
+        rows = self._parse_response(body)
         out: List[Dict] = []
         for r in rows:
             try:
@@ -236,17 +265,33 @@ class MMDClient:
             print(f"  [mmd] list_option_contracts({underlying}) failed: {e}", file=sys.stderr)
             return []
 
-        rows = self._parse_csv(body)
+        rows = self._parse_response(body)
         out: List[Dict] = []
         for r in rows:
             try:
+                # Handle: JSON PascalCase, JSON snake_case, CSV lowered
+                def _g(r, *keys, default=""):
+                    for k in keys:
+                        v = r.get(k)
+                        if v is not None:
+                            return v
+                    return default
+
+                ticker = _g(r, "ticker", "Ticker")
+                strike = _g(r, "strike_price", "StrikePrice", "strikeprice", default="0")
+                expiry = _g(r, "expiration_date", "ExpirationDate", "expirationdate")
+                ctype = _g(r, "contract_type", "ContractType", "contracttype")
+                estyle = _g(r, "exercise_style", "ExerciseStyle", "exercisestyle")
+                uticker = _g(r, "underlying_ticker", "UnderlyingTicker", "underlyingticker",
+                             default=underlying.upper())
+
                 out.append({
-                    "ticker": r["ticker"],
-                    "strike_price": float(r["strike_price"]),
-                    "expiration_date": r["expiration_date"],
-                    "contract_type": r["contract_type"],
-                    "exercise_style": r.get("exercise_style", ""),
-                    "underlying_ticker": r.get("underlying_ticker", underlying.upper()),
+                    "ticker": str(ticker),
+                    "strike_price": float(strike),
+                    "expiration_date": str(expiry),
+                    "contract_type": str(ctype),
+                    "exercise_style": str(estyle),
+                    "underlying_ticker": str(uticker),
                 })
             except (KeyError, ValueError):
                 continue
@@ -279,7 +324,7 @@ class MMDClient:
             print(f"  [mmd] get_option_aggregates({option_ticker}) failed: {e}",
                   file=sys.stderr)
             return []
-        rows = self._parse_csv(body)
+        rows = self._parse_response(body)
         out: List[Dict] = []
         for r in rows:
             try:
@@ -309,7 +354,7 @@ class MMDClient:
             print(f"  [mmd] get_option_prev_close({option_ticker}) failed: {e}",
                   file=sys.stderr)
             return None
-        rows = self._parse_csv(body)
+        rows = self._parse_response(body)
         if not rows:
             return None
         r = rows[0]
@@ -340,7 +385,7 @@ class MMDClient:
         except MMDError as e:
             print(f"  [mmd] get_ticker_reference({ticker}) failed: {e}", file=sys.stderr)
             return None
-        rows = self._parse_csv(body)
+        rows = self._parse_response(body)
         if not rows:
             return None
         return rows[0]

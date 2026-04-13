@@ -26,3 +26,5 @@ Thumbs.db
 # Secrets (if user moves API keys to env)
 .env
 .env.local
+config/mmd.json
+config/finnhub.json
