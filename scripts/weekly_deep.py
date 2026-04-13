@@ -591,11 +591,32 @@ def main() -> int:
     print(f"[weekly-deep] selected {len(selected)} for LLM deep research",
           file=sys.stderr)
 
+    # ---- Run feedback loop (Phase 3) ----
+    print(f"[weekly-deep] running feedback loop...", file=sys.stderr)
+    try:
+        import feedback_loop
+        param_health_md, feedback_analysis = feedback_loop.run_full_analysis(
+            conn, dry_run=args.dry_run
+        )
+        print(f"[weekly-deep] feedback loop complete: "
+              f"{len(feedback_analysis.get('proposals', []))} proposals",
+              file=sys.stderr)
+    except Exception as e:
+        print(f"[weekly-deep] feedback loop error: {e}", file=sys.stderr)
+        param_health_md = (
+            "## Parameter Health\n\n"
+            f"*Feedback loop encountered an error: {e}. "
+            "Run `python3 scripts/feedback_loop.py` manually to debug.*\n"
+        )
+
     # ---- Render ----
     pack = render_weekly_pack(
         flagged, rescore_map, retro_map, aggregates, selected,
         args.lookback, today,
     )
+    # Append the Parameter Health section from the feedback loop
+    pack += "\n" + param_health_md
+
     if args.out:
         out_path = Path(args.out)
         out_path.parent.mkdir(parents=True, exist_ok=True)
