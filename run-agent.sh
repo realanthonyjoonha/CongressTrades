@@ -249,13 +249,19 @@ case "$cmd" in
     fi
     echo "[daily] subject: $SUBJECT" | tee -a "$LOG"
 
-    # Strip SUBJECT line AND fenced JSON block before formatting HTML
-    # (the JSON block is internal machinery the reader shouldn't see)
+    # Strip LLM preamble, SUBJECT line, and fenced JSON block before
+    # formatting HTML. The narrative is everything AFTER the SUBJECT line;
+    # anything before SUBJECT is LLM thinking / preamble the reader
+    # shouldn't see. The JSON block is internal machinery.
     python3 -c "
 import re, sys
 with open('$NARRATIVE') as f:
     text = f.read()
-text = re.sub(r'^SUBJECT:.*\n', '', text, flags=re.MULTILINE)
+# Keep only content after the first SUBJECT line (drops any preamble)
+m = re.search(r'^SUBJECT:.*\n', text, flags=re.MULTILINE)
+if m:
+    text = text[m.end():]
+# Strip fenced JSON block (internal machinery)
 text = re.sub(r'\`\`\`json\s*\n\{.*?\}\s*\n\`\`\`', '', text, flags=re.DOTALL)
 sys.stdout.write(text)
 " | python3 "$SCRIPTS_DIR/format_report.py" > "$REPORT"
@@ -347,12 +353,15 @@ sys.stdout.write(text)
     fi
     echo "[weekly] subject: $SUBJECT" | tee -a "$LOG"
 
-    # Strip SUBJECT line AND fenced JSON block
+    # Strip LLM preamble (anything before SUBJECT) + SUBJECT line itself
+    # + fenced JSON block. Keeps only the actual narrative body.
     python3 -c "
 import re, sys
 with open('$NARRATIVE') as f:
     text = f.read()
-text = re.sub(r'^SUBJECT:.*\n', '', text, flags=re.MULTILINE)
+m = re.search(r'^SUBJECT:.*\n', text, flags=re.MULTILINE)
+if m:
+    text = text[m.end():]
 text = re.sub(r'\`\`\`json\s*\n\{.*?\}\s*\n\`\`\`', '', text, flags=re.DOTALL)
 sys.stdout.write(text)
 " | python3 "$SCRIPTS_DIR/format_report.py" > "$REPORT"

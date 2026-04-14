@@ -366,9 +366,15 @@ def render_research_pack(
         if s4.get("same_sector_count"):
             lines.append(f"- *same-sector buys (broader context):* {s4['same_sector_count']}")
 
-        # ---- Phase 2.3.5: Real options strike for STRONG/BASE pre-tiers ----
+        # ---- Phase 2.3.5: Real options strike (any selected-for-LLM trade) ----
+        # Fetch for ALL selected trades, not just STRONG/BASE pre-tier,
+        # because Stage 3 can upgrade MODERATE→BASE when it finds a
+        # forward catalyst (fix from Phase 2.3.6 post-mortem on the
+        # Thomas Kean LIN/AMCR run). The LLM will use the real-chain
+        # values if it confirms the upgrade to BASE/STRONG; if it
+        # keeps the trade at MODERATE, the block is purely informational.
         pre_tier = s.get("tier_pre_stage3", "MODERATE")
-        if pre_tier in ("STRONG", "BASE"):
+        if pre_tier != "SKIP":
             lines.append("\n**Real-chain options pick (Phase 2.3.5):**")
             try:
                 import options_chain
@@ -377,14 +383,22 @@ def render_research_pack(
                 # picker use its default DTE window.
                 catalyst_date = next_earnings if next_earnings else None
                 has_catalyst = bool(catalyst_date)
+                # Pass signal_tier as the pre-tier OR "BASE" if it's
+                # MODERATE — so the picker uses BASE's delta target
+                # (the likely upgrade tier) instead of MODERATE's "no play".
+                chain_tier = pre_tier if pre_tier in ("STRONG", "BASE") else "BASE"
                 pick = options_chain.best_strike_for_trade(
                     ticker=t.get("ticker"),
-                    signal_tier=pre_tier,
+                    signal_tier=chain_tier,
                     has_catalyst=has_catalyst,
                     catalyst_date=catalyst_date,
                     today=today,
                     transaction_type=(t.get("transaction_type") or "buy"),
                 )
+                if pre_tier == "MODERATE":
+                    lines.append(f"- *pre-Stage-3 tier is MODERATE; "
+                                 f"chain fetched speculatively in case Stage 3 "
+                                 f"upgrades to BASE*")
                 if pick.get("mode") == "real":
                     lines.append(f"- structure: **{pick['structure']}** "
                                  f"strike ${pick['strike']}, expiry {pick['expiry']} "
