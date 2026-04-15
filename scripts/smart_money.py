@@ -347,6 +347,7 @@ def render_smart_money_section(
     n: int = DEFAULT_TOP_N,
     today: Optional[str] = None,
     force_refresh: bool = False,
+    chart_registry=None,
 ) -> str:
     """
     Render the Smart Money Watchlist as a markdown section.
@@ -432,7 +433,7 @@ def render_smart_money_section(
         for detail in politician_position_details:
             if not detail["positions"]:
                 continue
-            lines.append(f"**{detail['name']}**")
+            lines.append(f"**{detail['name']}**\n")
             # Sort positions by disclosure_date desc so newest on top
             sorted_positions = sorted(
                 detail["positions"],
@@ -442,13 +443,27 @@ def render_smart_money_section(
             for p in sorted_positions[:5]:  # cap at 5 most-recent per politician
                 excess_str = _fmt_pct(p.get("excess_pct"))
                 stock_str = _fmt_pct(p.get("pct_move"))
-                lines.append(
+                line = (
                     f"- {p['ticker']} bought {p['trade_date']} "
                     f"({p.get('amount_range', '—')}) — "
                     f"${p['entry_price']:.2f} → ${p['current_price']:.2f} "
                     f"({stock_str} stock, {excess_str} vs SPY, "
                     f"{p['days_remaining']}d remaining)"
                 )
+                lines.append(line)
+                # Register a sparkline (placeholder token in pack; actual
+                # base64 lives in the sidecar until format_report.py
+                # substitutes it).
+                if chart_registry is not None:
+                    try:
+                        import charts as _charts
+                        placeholder = _charts.register_sparkline(
+                            chart_registry, p["ticker"], p["trade_date"]
+                        )
+                        if placeholder:
+                            lines.append(f"  {placeholder}")
+                    except Exception:
+                        pass  # silently skip; bullet list still renders
             lines.append("")
     else:
         lines.append(

@@ -319,6 +319,7 @@ def render_weekly_pack(
     selected: List[Dict],
     lookback_days: int,
     today: str,
+    chart_registry=None,
 ) -> str:
     """
     Assemble the markdown research pack the LLM Phase B reads.
@@ -342,6 +343,28 @@ def render_weekly_pack(
     # ---- 1. Summary ----
     tier_counts = aggregates.get("tier_counts", {})
     lines.append("## Weekly summary\n")
+
+    # Register donut + winners/losers bar via the chart registry.
+    # Placeholders flow into the pack; actual base64 stays in sidecar.
+    if chart_registry is not None and sum(tier_counts.values()) > 0:
+        try:
+            import charts as _charts
+            donut_placeholder = _charts.register_tier_donut(
+                chart_registry, tier_counts, scope_label="weekly",
+            )
+            if donut_placeholder:
+                lines.append(f"{donut_placeholder}\n")
+            bar_placeholder = _charts.register_winners_losers_bar(
+                chart_registry,
+                aggregates.get("top_winners", []),
+                aggregates.get("top_losers", []),
+                scope_label="weekly",
+            )
+            if bar_placeholder:
+                lines.append(f"{bar_placeholder}\n")
+        except Exception as e:
+            print(f"  [weekly-deep] chart registration failed: {e}", file=sys.stderr)
+
     lines.append(f"- **STRONG:** {tier_counts.get('STRONG', 0)}")
     lines.append(f"- **BASE:** {tier_counts.get('BASE', 0)}")
     lines.append(f"- **MODERATE:** {tier_counts.get('MODERATE', 0)}")
@@ -609,10 +632,18 @@ def main() -> int:
             "Run `python3 scripts/feedback_loop.py` manually to debug.*\n"
         )
 
+    # ---- Chart registry (placeholder + sidecar pattern) ----
+    try:
+        import charts as _charts
+        chart_registry = _charts.ChartRegistry()
+    except Exception:
+        chart_registry = None
+
     # ---- Render ----
     pack = render_weekly_pack(
         flagged, rescore_map, retro_map, aggregates, selected,
         args.lookback, today,
+        chart_registry=chart_registry,
     )
     # Append the Parameter Health section from the feedback loop
     pack += "\n" + param_health_md
@@ -623,6 +654,17 @@ def main() -> int:
         out_path.write_text(pack)
         print(f"[weekly-deep] wrote research pack: {out_path} ({len(pack):,} bytes)",
               file=sys.stderr)
+        # Sidecar: actual chart URIs next to the pack
+        if chart_registry is not None and chart_registry.to_dict():
+            sidecar_path = out_path.with_suffix(".charts.json")
+            try:
+                chart_registry.save(sidecar_path)
+                print(f"[weekly-deep] wrote chart sidecar: {sidecar_path} "
+                      f"({len(chart_registry.to_dict())} charts)",
+                      file=sys.stderr)
+            except Exception as e:
+                print(f"[weekly-deep] chart sidecar write failed: {e}",
+                      file=sys.stderr)
     else:
         sys.stdout.write(pack)
 

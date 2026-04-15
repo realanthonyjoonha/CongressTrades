@@ -232,6 +232,7 @@ def render_research_pack(
     lookback_days: int,
     today: str,
     conn=None,
+    chart_registry=None,
 ) -> str:
     """
     Assemble the markdown research pack the LLM Phase B reads.
@@ -283,7 +284,9 @@ def render_research_pack(
     if conn is not None:
         try:
             import smart_money
-            lines.append(smart_money.render_smart_money_section(conn, today=today))
+            lines.append(smart_money.render_smart_money_section(
+                conn, today=today, chart_registry=chart_registry,
+            ))
         except Exception as e:
             lines.append(f"## Smart Money Watchlist\n\n"
                          f"*Smart Money section skipped due to error: {e}*\n")
@@ -319,6 +322,24 @@ def render_research_pack(
         metrics = s2.get("raw_metrics", {})
 
         lines.append(f"### Trade {i}: {t.get('politician_name')} — {t.get('ticker')} ({t.get('transaction_type')})\n")
+
+        # Register a per-trade price chart. Placeholder token goes into
+        # the pack (small); actual base64 lives in the sidecar JSON.
+        # format_report.py substitutes the placeholder during HTML render.
+        if chart_registry is not None and t.get("ticker") and t.get("trade_date"):
+            try:
+                import charts as _charts
+                placeholder = _charts.register_price_chart(
+                    chart_registry,
+                    t["ticker"],
+                    t["trade_date"],
+                    trade_id=t.get("id"),
+                )
+                if placeholder:
+                    lines.append(f"{placeholder}\n")
+            except Exception:
+                pass
+
         lines.append(f"- **trade_id:** {t.get('id')}")
         lines.append(f"- **trade_date:** {t.get('trade_date')}")
         lines.append(f"- **disclosure_date:** {t.get('disclosure_date')}")
@@ -739,6 +760,29 @@ def main() -> int:
 
     conn = db.connect()
 
+    # Chart registry — accumulates chart data URIs during rendering.
+    # Gets serialized to a sidecar JSON alongside the pack so
+    # format_report.py can substitute placeholders at email-render time.
+    try:
+        import charts as _charts
+        chart_registry = _charts.ChartRegistry()
+    except Exception:
+        chart_registry = None
+
+    def _save_chart_sidecar(pack_path: str) -> None:
+        """Write the chart registry next to the pack (same basename, .json)."""
+        if chart_registry is None or not chart_registry.to_dict():
+            return
+        sidecar_path = Path(pack_path).with_suffix(".charts.json")
+        try:
+            chart_registry.save(sidecar_path)
+            print(f"[daily-signal] wrote chart sidecar: {sidecar_path} "
+                  f"({len(chart_registry.to_dict())} charts)",
+                  file=sys.stderr)
+        except Exception as e:
+            print(f"[daily-signal] chart sidecar write failed: {e}",
+                  file=sys.stderr)
+
     # ---- Fetch overnight trades ----
     trades = fetch_overnight(conn, lookback_days=args.lookback)
     print(f"[daily-signal] fetched {len(trades)} overnight trades "
@@ -746,12 +790,16 @@ def main() -> int:
 
     if not trades:
         # Still produce a research pack so the runner has something
-        pack = render_research_pack([], [], args.lookback, today, conn=conn)
+        pack = render_research_pack(
+            [], [], args.lookback, today,
+            conn=conn, chart_registry=chart_registry,
+        )
         if args.out:
             out_path = Path(args.out)
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(pack)
             print(f"[daily-signal] wrote research pack: {out_path} (empty run)", file=sys.stderr)
+            _save_chart_sidecar(args.out)
         else:
             sys.stdout.write(pack)
         backtest.save_price_cache()
@@ -775,13 +823,17 @@ def main() -> int:
     print(f"[daily-signal] selected {len(selected)} trades for LLM Phase B", file=sys.stderr)
 
     # ---- Render research pack ----
-    pack = render_research_pack(scored, selected, args.lookback, today, conn=conn)
+    pack = render_research_pack(
+        scored, selected, args.lookback, today,
+        conn=conn, chart_registry=chart_registry,
+    )
     if args.out:
         out_path = Path(args.out)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(pack)
         print(f"[daily-signal] wrote research pack: {out_path} ({len(pack):,} bytes)",
               file=sys.stderr)
+        _save_chart_sidecar(args.out)
     else:
         sys.stdout.write(pack)
 

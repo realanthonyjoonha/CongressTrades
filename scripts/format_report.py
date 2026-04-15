@@ -134,6 +134,7 @@ def render_email(
     roster_tier: Optional[str] = None,
     counts: Optional[Dict] = None,
     preview_text: Optional[str] = None,
+    charts_sidecar: Optional[str] = None,
 ) -> str:
     """
     Render a narrative markdown document → production HTML email.
@@ -191,6 +192,22 @@ def render_email(
             s = re.sub(r"`(.+?)`", r"\1", s)
             preview_text = s[:90].strip()
             break
+
+    # Substitute chart placeholders from the sidecar BEFORE markdown2 runs.
+    # markdown2 sees real `![alt](data:image/png;base64,...)` tags and
+    # renders them as <img> tags naturally.
+    if charts_sidecar:
+        try:
+            # Lazy-import charts so format_report still works if charts.py
+            # isn't available (e.g., in a minimal install without matplotlib)
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            import charts as _charts
+            registry = _charts.ChartRegistry.load(charts_sidecar)
+            if registry.to_dict():
+                narrative_md = registry.substitute(narrative_md)
+        except Exception as e:
+            print(f"[format_report] WARN: chart substitution failed: {e}",
+                  file=sys.stderr)
 
     # Convert markdown → HTML
     body_html = markdown_to_html(narrative_md)
@@ -301,6 +318,11 @@ def main() -> int:
     ap.add_argument("--count-skip", type=int)
     ap.add_argument("--count-flagged", type=int)
     ap.add_argument("--count-beat-spy-pct", help='e.g. "50%%"')
+    ap.add_argument("--charts-sidecar",
+                    help="Path to a chart-registry JSON sidecar file "
+                         "(see scripts/charts.py ChartRegistry). Substitutes "
+                         "<!--CHART:id--> placeholders in the narrative with "
+                         "base64 image tags before rendering.")
     args = ap.parse_args()
 
     # Read narrative
@@ -325,6 +347,7 @@ def main() -> int:
             roster_tier=args.roster_tier,
             counts=counts,
             preview_text=args.preview_text,
+            charts_sidecar=args.charts_sidecar,
         )
     except Exception as e:
         print(f"[format_report] ERROR: render failed: {e}", file=sys.stderr)

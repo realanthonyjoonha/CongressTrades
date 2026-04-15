@@ -280,7 +280,8 @@ sys.stdout.write(text)
 " | python3 "$SCRIPTS_DIR/format_report.py" \
       --template daily \
       --subject "$SUBJECT" \
-      --date-display "$DATE_DISPLAY_FMT" > "$REPORT"
+      --date-display "$DATE_DISPLAY_FMT" \
+      --charts-sidecar "${PACK%.md}.charts.json" > "$REPORT"
     if [ ! -s "$REPORT" ]; then
       echo "[daily] ERROR: HTML report empty after format_report.py" | tee -a "$LOG"
       exit 1
@@ -383,7 +384,8 @@ sys.stdout.write(text)
 " | python3 "$SCRIPTS_DIR/format_report.py" \
       --template weekly \
       --subject "$SUBJECT" \
-      --date-display "$DATE_DISPLAY_FMT" > "$REPORT"
+      --date-display "$DATE_DISPLAY_FMT" \
+      --charts-sidecar "${PACK%.md}.charts.json" > "$REPORT"
     if [ ! -s "$REPORT" ]; then
       echo "[weekly] ERROR: HTML report empty after format_report.py" | tee -a "$LOG"
       exit 1
