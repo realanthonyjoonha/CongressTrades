@@ -391,6 +391,142 @@ def get_weekly_flagged_trades(
     return cur.fetchall()
 
 
+def insert_tracker_run(
+    conn: sqlite3.Connection,
+    run_data: Dict,
+) -> int:
+    """
+    Persist a tracker run's outcome to `tracker_runs`. Called once per
+    tracker invocation (even silent runs with 0 new trades).
+
+    Expected keys in run_data (all optional except run_timestamp):
+        run_timestamp (str, required), completed_at, source, year,
+        since_date, trades_persisted, placeholders_skipped,
+        new_trade_ids (list[int]), new_politician_names (list[str]),
+        email_sent (bool), email_subject, phase_b_searches, exit_code,
+        failure_reason
+
+    Returns the inserted row id.
+    """
+    schema_cols = [
+        "run_timestamp", "completed_at", "source", "year", "since_date",
+        "trades_persisted", "placeholders_skipped",
+        "new_trade_ids", "new_politician_names",
+        "email_sent", "email_subject", "phase_b_searches",
+        "exit_code", "failure_reason",
+    ]
+    cols: List[str] = []
+    placeholders: List[str] = []
+    values: List = []
+    for c in schema_cols:
+        if c in run_data:
+            v = run_data[c]
+            if isinstance(v, (list, dict)):
+                v = json.dumps(v)
+            if isinstance(v, bool):
+                v = 1 if v else 0
+            cols.append(c)
+            placeholders.append("?")
+            values.append(v)
+
+    if "run_timestamp" not in run_data:
+        raise ValueError("insert_tracker_run requires run_timestamp")
+
+    sql = (
+        f"INSERT INTO tracker_runs ({', '.join(cols)}) "
+        f"VALUES ({', '.join(placeholders)})"
+    )
+    cur = conn.cursor()
+    cur.execute(sql, values)
+    conn.commit()
+    return cur.lastrowid or -1
+
+
+def get_tracker_runs_since(
+    conn: sqlite3.Connection,
+    hours: int = 24,
+    only_with_email: bool = False,
+) -> List[sqlite3.Row]:
+    """
+    Read recent tracker_runs rows for the Daily Signal agent's "memory"
+    section. By default returns runs from the trailing N hours. When
+    `only_with_email=True`, filters to runs that actually composed and
+    sent a tracker email (skipping silent 0-filing runs).
+    """
+    cur = conn.cursor()
+    # SQLite DATE() arithmetic on datetime strings works; for hour-level
+    # precision we use datetime() with a modifier.
+    sql = """
+        SELECT * FROM tracker_runs
+        WHERE datetime(run_timestamp) >= datetime('now', ?)
+    """
+    params: List = [f"-{hours} hours"]
+    if only_with_email:
+        sql += " AND email_sent = 1"
+    sql += " ORDER BY run_timestamp DESC"
+    cur.execute(sql, params)
+    return cur.fetchall()
+
+
+def get_recommendations_since(
+    conn: sqlite3.Connection,
+    days: int = 7,
+    tiers: Optional[List[str]] = None,
+) -> List[sqlite3.Row]:
+    """
+    Read recommendations created in the trailing N days, joined with the
+    trades table for context (ticker, politician, trade_date, amount_range).
+    Used by the Daily Signal agent to surface "what we flagged recently"
+    as context for today's run.
+
+    Args:
+        days: trailing window in days
+        tiers: optional filter, e.g. ['STRONG', 'BASE'] for the
+               "actionable trades only" view that the user asked for.
+
+    Returns list of Row objects with all recommendations columns plus
+    ticker, politician_name, trade_date, amount_range from trades.
+    """
+    cur = conn.cursor()
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    # Parameter order follows the SQL placeholder order: date filter first,
+    # then optional tier list. Getting this wrong silently returns zero rows.
+    params: List = [today, f"-{days} days"]
+    placeholders_clause = ""
+    if tiers:
+        placeholders = ", ".join(["?"] * len(tiers))
+        placeholders_clause = f"AND r.signal_tier IN ({placeholders})"
+        params.extend(list(tiers))
+    sql = f"""
+        SELECT
+            r.id as recommendation_id,
+            r.trade_id,
+            r.signal_tier,
+            r.option_type,
+            r.strike,
+            r.expiry,
+            r.dte,
+            r.delta,
+            r.entry_timestamp,
+            r.thesis,
+            r.bear_case,
+            t.ticker,
+            t.politician_name,
+            t.trade_date,
+            t.disclosure_date,
+            t.amount_range,
+            t.sector,
+            t.clustering_count
+        FROM recommendations r
+        JOIN trades t ON r.trade_id = t.id
+        WHERE DATE(r.entry_timestamp) >= DATE(?, ?)
+        {placeholders_clause}
+        ORDER BY r.entry_timestamp DESC
+    """
+    cur.execute(sql, params)
+    return cur.fetchall()
+
+
 def get_overnight_trades(
     conn: sqlite3.Connection,
     lookback_days: int = 3,

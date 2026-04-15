@@ -178,19 +178,109 @@ sys.stdout.write(text)
 
   tracker)
     LOG="$LOG_DIR/tracker_${TIMESTAMP}.log"
+    SENTINEL="$TMP_DIR/tracker_${TIMESTAMP}_sentinel.json"
+    PACK="$TMP_DIR/tracker_${TIMESTAMP}_pack.md"
+    NARRATIVE="$TMP_DIR/tracker_${TIMESTAMP}_narrative.md"
+    REPORT="$REPORT_DIR/tracker_${TIMESTAMP}.html"
+    DAILY_DISTRO="${DAILY_DISTRO:-config/email-distro-daily.json}"
+    TRACKER_MODEL="${TRACKER_MODEL:-claude-sonnet-4-6}"
+
     echo "[tracker] $(date) — starting data maintenance run" | tee -a "$LOG"
 
+    # ---- Phase A: Python ingest ----
     set +e
-    python3 "$SCRIPTS_DIR/data_maintenance.py" "$@" 2>&1 | tee -a "$LOG"
+    python3 "$SCRIPTS_DIR/data_maintenance.py" --sentinel-path "$SENTINEL" "$@" 2>&1 | tee -a "$LOG"
     EXIT_CODE=${PIPESTATUS[0]}
     set -e
 
-    if [ "$EXIT_CODE" -eq 0 ]; then
-      echo "[tracker] DONE — $(date)" | tee -a "$LOG"
-    else
+    if [ "$EXIT_CODE" -ne 0 ]; then
       echo "[tracker] FAILED with exit $EXIT_CODE — $(date)" | tee -a "$LOG"
       exit "$EXIT_CODE"
     fi
+
+    # ---- Decide whether to run Phase B ----
+    NEW_TRADES=0
+    if [ -s "$SENTINEL" ]; then
+      NEW_TRADES=$(python3 -c "import json; d=json.load(open('$SENTINEL')); print(len(d.get('new_trade_ids') or []))" 2>/dev/null || echo 0)
+    fi
+    echo "[tracker] sentinel reports $NEW_TRADES new trade(s)" | tee -a "$LOG"
+
+    if [ "$NEW_TRADES" -eq 0 ]; then
+      echo "[tracker] DONE — 0 new filings; skipping Phase B email" | tee -a "$LOG"
+      exit 0
+    fi
+
+    # ---- Phase B1: build pack for Sonnet ----
+    echo "[tracker] Phase B1 — building pack for Sonnet..." | tee -a "$LOG"
+    set +e
+    python3 "$SCRIPTS_DIR/tracker_phase_b.py" --sentinel "$SENTINEL" --out "$PACK" 2>&1 | tee -a "$LOG"
+    B1_EXIT=${PIPESTATUS[0]}
+    set -e
+    if [ "$B1_EXIT" -ne 0 ] || [ ! -s "$PACK" ]; then
+      echo "[tracker] ERROR: Phase B1 failed (exit $B1_EXIT, pack empty=$([ -s "$PACK" ] || echo yes))" | tee -a "$LOG"
+      exit 1
+    fi
+
+    # ---- Phase B2: Sonnet composes the email narrative ----
+    echo "[tracker] Phase B2 — invoking Sonnet ($TRACKER_MODEL) for email..." | tee -a "$LOG"
+    DATE_DISPLAY_FMT=$(date '+%b %-d, %Y %-I:%M %p %Z')
+    PROMPT=$(sed \
+        -e "s|{RESEARCH_PACK_PATH}|$PACK|g" \
+        -e "s|{DATE_DISPLAY}|$DATE_DISPLAY_FMT|g" \
+        "$PROMPTS_DIR/tracker.md")
+    echo "$PROMPT" | claude --print --model "$TRACKER_MODEL" --dangerously-skip-permissions \
+        > "$NARRATIVE" 2>> "$LOG" || {
+      echo "[tracker] WARN: Sonnet exited non-zero, checking output..." | tee -a "$LOG"
+    }
+    if [ ! -s "$NARRATIVE" ]; then
+      echo "[tracker] ERROR: narrative empty — Sonnet subprocess failed" | tee -a "$LOG"
+      exit 1
+    fi
+    if grep -qiE "invalid api key|please run /login|authentication failed" "$NARRATIVE"; then
+      echo "[tracker] ERROR: Claude auth failure — run 'claude login'" | tee -a "$LOG"
+      exit 1
+    fi
+    echo "[tracker] Phase B2 complete — narrative: $(wc -c < "$NARRATIVE") bytes" | tee -a "$LOG"
+
+    # ---- Phase B3: writeback committee cache + update tracker_runs ----
+    echo "[tracker] Phase B3 — writeback committee cache..." | tee -a "$LOG"
+    set +e
+    python3 "$SCRIPTS_DIR/tracker_phase_b.py" --writeback "$NARRATIVE" 2>&1 | tee -a "$LOG"
+    set -e
+
+    # ---- Phase C: format HTML + email ----
+    echo "[tracker] Phase C — formatting HTML and sending email..." | tee -a "$LOG"
+    SUBJECT=$(grep "^SUBJECT:" "$NARRATIVE" | head -1 | sed 's/^SUBJECT: *//')
+    if [ -z "$SUBJECT" ]; then
+      SUBJECT="Tracker — $NEW_TRADES new filings ($DATE_DISPLAY)"
+    fi
+    echo "[tracker] subject: $SUBJECT" | tee -a "$LOG"
+
+    python3 -c "
+import re, sys
+with open('$NARRATIVE') as f:
+    text = f.read()
+m = re.search(r'^SUBJECT:.*\n', text, flags=re.MULTILINE)
+if m:
+    text = text[m.end():]
+text = re.sub(r'\`\`\`json\s*\n\{.*?\}\s*\n\`\`\`', '', text, flags=re.DOTALL)
+sys.stdout.write(text)
+" | python3 "$SCRIPTS_DIR/format_report.py" \
+      --template tracker \
+      --subject "$SUBJECT" \
+      --date-display "$DATE_DISPLAY_FMT" > "$REPORT"
+
+    if [ ! -s "$REPORT" ]; then
+      echo "[tracker] ERROR: HTML report empty" | tee -a "$LOG"
+      exit 1
+    fi
+
+    python3 "$SCRIPTS_DIR/send_email.py" \
+        --subject "$SUBJECT" \
+        --html-file "$REPORT" \
+        --distro "$DAILY_DISTRO" 2>&1 | tee -a "$LOG"
+
+    echo "[tracker] DONE — report: $REPORT" | tee -a "$LOG"
     ;;
 
   daily)

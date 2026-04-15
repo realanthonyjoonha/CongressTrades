@@ -93,22 +93,34 @@ Then the report body in this exact section order:
 - Total trades scored, breakdown by final tier
 - The single most actionable play (or "no actionable plays today" if no STRONG/BASE)
 - Any cluster pattern worth highlighting (3+ politicians on the same ticker, cross-party convergence)
-- **Any notable Smart Money Watchlist activity** (a top-5 politician with a big open-position move, new trade, or meaningful underperformance — cross-reference with the pre-computed Smart Money section below)
+- **Any notable Smart Money / Top 5 Live P&L activity** (a big intraday move, a repeat ticker across multiple Top 5 politicians, a Recent Flagged trade from earlier this week that's now back in today's filings)
 - Any data gaps to flag (Phase A errors, MMD-deferred checks)
 
-### 2. Smart Money Watchlist (paste the pre-computed section verbatim)
+### 2. Tracker Reports Summary (1-2 sentences)
+
+The research pack includes a "**Tracker Reports (last 24 hours)**" section showing each tracker email that landed in the past 24h. Summarize it in 1–2 sentences — e.g., "3 tracker emails yesterday delivered 12 new filings across 5 politicians, most notable Thomas Kean's repeat accumulation in LIN." If zero tracker runs surfaced new filings, say that in one line. Do NOT re-list every filing — the raw table is already in the pack for reference.
+
+### 3. Top 5 Live P&L Summary (paste the pre-computed section verbatim)
+
+The research pack includes a fully-rendered "**Top 5 Live P&L Today**" section with per-politician tables showing today's intraday P&L + since-entry performance vs SPY for every currently-open position. **Copy that entire section into your narrative here without modification.** Immediately after pasting, add 1–2 sentences of analytical commentary if anything stands out — e.g., "Tim Moore's HOG position continues outperforming, now +29.7% vs SPY since entry" or "LGIH cluster is grinding higher today (+2.6%) — the housing thesis is still live." Skip commentary if nothing is noteworthy.
+
+### 4. Recent Flagged Trades Context (1-2 sentences)
+
+The pack includes "**Recent Flagged Trades (last 7 days — STRONG + BASE)**" — a table of yesterday's and this week's flagged tickers. In 1–2 sentences, highlight any ticker that ALSO appears in today's overnight disclosures OR today's Top 5 live P&L — that's the strongest pattern (politicians clustering into a ticker we already flagged). If no overlap, say so in one line.
+
+### 5. Smart Money Watchlist (paste the pre-computed section verbatim)
 
 The research pack includes a fully-rendered "**Smart Money Watchlist — Top 5 Historical Performers**" section with a compact table and optional per-politician open-position detail. **Copy that entire section into your narrative here without modification.** The table tracks the top 5 politicians by recency-weighted excess vs SPY, with their currently-open positions (trades within the 60-day holding window).
 
-After pasting the table verbatim, you MAY add 1–2 sentences of analytical commentary below it if something is genuinely noteworthy — e.g., "Tim Moore's LGIH cluster (3 buys over 3 days in homebuilders) is the most concentrated new position across the roster" or "Mark Green continues to have zero open positions; his edge is on a break". Skip commentary if nothing stands out. Do not rewrite or re-rank the table itself.
+After pasting the table verbatim, you MAY add 1–2 sentences of analytical commentary below it if something is genuinely noteworthy. Skip commentary if nothing stands out.
 
-### 3. Pipeline Summary
+### 6. Pipeline Summary
 - Total overnight trades: N
 - Per-tier breakdown (STRONG / BASE / MODERATE / SKIP)
 - Per-skip-reason histogram (window-closed, no-ticker, dependent, etc.)
 - Note: "Stage 2 ran in Lite mode — A3 IV expansion still deferred (needs historical IV cache, Phase 3 work). B1 earnings pass-through has been collapsed into Stage 3 forward catalyst identification: every flagged trade now includes its next earnings date from yfinance's calendar, used by both the LLM Stage 3 search and the options layer's DTE selection."
 
-### 4. STRONG Plays (if any)
+### 7. STRONG Plays (if any)
 For each STRONG-tier trade:
 - **Header:** `### STRONG: [ticker] — [politician] (member_direct/spouse/dependent)`
 - **Trade context:** trade_date, disclosure_date, amount_range, sector
@@ -124,17 +136,17 @@ For each STRONG-tier trade:
 
 If there are zero STRONG plays, write a single line: *"No trades reached STRONG tier this morning."*
 
-### 5. BASE Plays
+### 8. BASE Plays
 Same template as STRONG but lighter — keep each trade to 5–8 sentences. No need to repeat the stage trace if it's already in the pack; reference it briefly.
 
-### 6. MODERATE Plays
+### 9. MODERATE Plays
 **No options recommendations.** Just commentary in 1–2 sentences each: "Notable but unactionable — [politician] [ticker], [reason]". Cap at 5 trades; if more, summarize the rest as "X more MODERATE trades, see DB for details."
 
-### 7. SKIPs
+### 10. SKIPs
 Just counts + reasons. One line:
 *"Skipped: 3 trades (3 OWD window-closed). See trade_diagnostics table for full details."*
 
-### 8. Notable Patterns
+### 11. Notable Patterns
 Free-form 1–3 paragraphs on anything interesting:
 - Cluster of politicians on a single ticker / sector
 - Cross-party convergence
@@ -142,13 +154,13 @@ Free-form 1–3 paragraphs on anything interesting:
 - Repeat names from the core roster (Mark Green, Tim Moore, Christopher Jacobs)
 - Unusual disclosure lag patterns
 
-### 9. Tomorrow's Watchlist
+### 12. Tomorrow's Watchlist
 3–5 bullets on what to monitor:
 - Tickers worth watching (with reason)
 - Politicians whose recent activity suggests more coming
 - Calendar events (earnings dates, hearings) you discovered during research
 
-### 10. Methodology Caveats
+### 13. Methodology Caveats
 A short fixed paragraph (you can copy this verbatim):
 
 > This report is generated by the CongressTrades Daily Signal agent. Phase A computed Stages 1, 2 (Lite), and 4 of the signal pipeline deterministically; Phase B (this output) synthesized Stage 3 forward-catalyst research via web search. Phase 2.3.5 added a real-options layer: for STRONG and BASE pre-tier trades, the research pack includes a real strike + expiry + Greeks (delta, gamma, theta, vega) computed from a live yfinance options chain via Black-Scholes (IV computed via inverse BS from lastPrice for off-hours robustness). Stage 2 still runs 5 of the 8 OWD checks — A3 (IV expansion) requires a historical IV cache and is deferred to Phase 3 work; B1 (earnings pass-through) has been collapsed into Stage 3 catalyst identification by surfacing yfinance's earnings calendar in the research pack. The pipeline is conservative when checks are absent (under-flag rather than over-flag). Real strikes are quoted with a snapshot timestamp — verify bid/ask before entry. AI-generated for research purposes only. Not financial advice.

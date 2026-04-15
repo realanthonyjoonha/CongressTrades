@@ -632,6 +632,30 @@ def main() -> int:
             "Run `python3 scripts/feedback_loop.py` manually to debug.*\n"
         )
 
+    # ---- Phase 2.4: Roster update check ----
+    # Recompute the Top 5 ranking and auto-apply swaps when a challenger
+    # exceeds the weakest incumbent by >= 20% (MIN_CHALLENGE_MULT).
+    # Each applied swap is logged to parameter_changelog.
+    print(f"[weekly-deep] running roster update check...", file=sys.stderr)
+    try:
+        import smart_money
+        roster_result = smart_money.update_roster_if_needed(
+            conn, dry_run=args.dry_run
+        )
+        applied_swaps = sum(1 for s in roster_result.get("swaps", []) if s.get("threshold_met"))
+        print(f"[weekly-deep] roster check complete: "
+              f"{len(roster_result.get('swaps', []))} swaps evaluated, "
+              f"{applied_swaps} applied",
+              file=sys.stderr)
+        roster_md = smart_money.render_roster_update_section(roster_result)
+    except Exception as e:
+        print(f"[weekly-deep] roster update error: {e}", file=sys.stderr)
+        roster_md = (
+            "## Roster Update — Top 5 Congressional Traders\n\n"
+            f"*Roster update check encountered an error: {e}. "
+            "Run `python3 scripts/smart_money.py update-roster` manually to debug.*\n"
+        )
+
     # ---- Chart registry (placeholder + sidecar pattern) ----
     try:
         import charts as _charts
@@ -645,7 +669,9 @@ def main() -> int:
         args.lookback, today,
         chart_registry=chart_registry,
     )
-    # Append the Parameter Health section from the feedback loop
+    # Append the Roster Update section (Phase 2.4) and the Parameter
+    # Health section from the feedback loop
+    pack += "\n" + roster_md
     pack += "\n" + param_health_md
 
     if args.out:

@@ -216,9 +216,35 @@ CREATE TABLE IF NOT EXISTS stock_metrics (
     last_price REAL,
     last_updated TEXT
 );
+
+-- Tracker run audit log (Phase 2.4)
+-- One row per tracker invocation, even silent (0 new filings) runs.
+-- The Daily Signal agent queries this table for "what the tracker found
+-- between yesterday's daily and today's" as a research-pack memory section.
+CREATE TABLE IF NOT EXISTS tracker_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_timestamp TEXT NOT NULL,           -- ISO datetime when run started
+    completed_at TEXT,                     -- ISO datetime when run finished
+    source TEXT,                           -- 'house-efd' | 'finnhub'
+    year INTEGER,
+    since_date TEXT,                       -- --since parameter used
+    trades_persisted INTEGER,              -- from ingest stats
+    placeholders_skipped INTEGER,
+    new_trade_ids TEXT,                    -- JSON array of trade IDs added
+    new_politician_names TEXT,             -- JSON array of unique politicians touched
+    email_sent INTEGER DEFAULT 0,          -- 1 if Phase B composed + sent an email
+    email_subject TEXT,
+    phase_b_searches INTEGER,              -- how many web searches Sonnet made
+    exit_code INTEGER,                     -- 0 = success
+    failure_reason TEXT                    -- NULL on success
+);
+
+CREATE INDEX IF NOT EXISTS idx_tracker_runs_ts ON tracker_runs(run_timestamp);
+CREATE INDEX IF NOT EXISTS idx_tracker_runs_email ON tracker_runs(email_sent);
 """
 
 TABLES_TO_DROP = [
+    "tracker_runs",
     "stock_metrics", "sources_raw", "tunable_parameters", "parameter_changelog",
     "trade_diagnostics", "paper_positions", "recommendations",
     "committee_mappings", "trades", "politicians",

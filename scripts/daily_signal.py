@@ -277,6 +277,111 @@ def render_research_pack(
             lines.append(f"- {k}: {v}")
     lines.append("")
 
+    # ---- Tracker Reports (last 24h) — Phase 2.4 memory layer ----
+    # The Daily Signal reads what the every-3-hour tracker has found
+    # between yesterday's daily and today's. This is the "memory of all
+    # the different reports from the Data Maintenance agent" the user
+    # asked for.
+    if conn is not None:
+        try:
+            tracker_runs = db.get_tracker_runs_since(conn, hours=24, only_with_email=True)
+            lines.append("## Tracker Reports (last 24 hours)\n")
+            if not tracker_runs:
+                lines.append(
+                    "*No tracker runs surfaced new filings in the past 24 hours. "
+                    "The Data Maintenance agent runs every 3 hours; silent runs "
+                    "are not shown here.*\n"
+                )
+            else:
+                total_new = sum(r["trades_persisted"] or 0 for r in tracker_runs)
+                total_politicians: set = set()
+                for r in tracker_runs:
+                    names = r["new_politician_names"]
+                    if names:
+                        try:
+                            total_politicians.update(json.loads(names))
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                lines.append(
+                    f"*{len(tracker_runs)} tracker email(s) sent in last 24h · "
+                    f"{total_new} new filings ingested · "
+                    f"{len(total_politicians)} distinct politicians touched.*\n"
+                )
+                lines.append("| Run (UTC) | New filings | Politicians | Subject |")
+                lines.append("|---|---|---|---|")
+                for r in tracker_runs[:10]:
+                    ts = (r["run_timestamp"] or "")[:16].replace("T", " ")
+                    names = r["new_politician_names"]
+                    n_pols = 0
+                    if names:
+                        try:
+                            n_pols = len(json.loads(names))
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    subject = r["email_subject"] or "—"
+                    # Truncate subject for table width
+                    if len(subject) > 60:
+                        subject = subject[:57] + "..."
+                    lines.append(
+                        f"| {ts} "
+                        f"| {r['trades_persisted'] or 0} "
+                        f"| {n_pols} "
+                        f"| {subject} |"
+                    )
+                lines.append("")
+        except Exception as e:
+            lines.append(f"## Tracker Reports (last 24 hours)\n\n"
+                         f"*Tracker memory section skipped due to error: {e}*\n")
+
+    # ---- Top 5 Live P&L Today — Phase 2.4 live market data layer ----
+    if conn is not None:
+        try:
+            import live_pnl
+            lines.append(live_pnl.render_top5_live_section(
+                conn, chart_registry=chart_registry,
+            ))
+        except Exception as e:
+            lines.append(f"## Top 5 Live P&L Today\n\n"
+                         f"*Live P&L section skipped due to error: {e}*\n")
+
+    # ---- Recent Flagged Trades (last 7 days) — Phase 2.4 next-day context ----
+    # User explicitly asked: "For any trades that are Strong or Base, I want
+    # the Daily Signal to create a log of the ticker so that the next day's
+    # Daily Signal Agent can refer it as context." The recommendations
+    # table already stores flagged trades; here we surface them for today.
+    if conn is not None:
+        try:
+            recent_flagged = db.get_recommendations_since(
+                conn, days=7, tiers=["STRONG", "BASE"],
+            )
+            lines.append("## Recent Flagged Trades (last 7 days — STRONG + BASE)\n")
+            if not recent_flagged:
+                lines.append(
+                    "*No STRONG or BASE trades flagged in the past 7 days.*\n"
+                )
+            else:
+                lines.append(
+                    f"*{len(recent_flagged)} recent flagged trade(s). Cross-"
+                    "reference against today's overnight disclosures and Top 5 "
+                    "positions — a repeat of the same ticker is a notable pattern.*\n"
+                )
+                lines.append("| Flagged | Tier | Politician | Ticker | Trade Date | Cluster |")
+                lines.append("|---|---|---|---|---|---|")
+                for rec in recent_flagged[:20]:
+                    flagged_at = (rec["entry_timestamp"] or "")[:10]
+                    lines.append(
+                        f"| {flagged_at} "
+                        f"| **{rec['signal_tier']}** "
+                        f"| {(rec['politician_name'] or '—')[:25]} "
+                        f"| {rec['ticker']} "
+                        f"| {rec['trade_date']} "
+                        f"| {rec['clustering_count'] or 0} |"
+                    )
+                lines.append("")
+        except Exception as e:
+            lines.append(f"## Recent Flagged Trades\n\n"
+                         f"*Recent-flagged section skipped due to error: {e}*\n")
+
     # ---- Smart Money Watchlist (Top 5 historical performers + open positions) ----
     # Rendered on every run — even empty-disclosure days — because the open
     # positions are always worth tracking independent of today's overnight

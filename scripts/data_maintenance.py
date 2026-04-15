@@ -36,6 +36,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -355,6 +356,11 @@ def main() -> int:
                     help=f"Days to subtract from latest disclosure (default {DEFAULT_BUFFER_DAYS})")
     ap.add_argument("--timeout", type=int, default=DEFAULT_INGEST_TIMEOUT_SEC,
                     help=f"Subprocess timeout in seconds (default {DEFAULT_INGEST_TIMEOUT_SEC})")
+    ap.add_argument("--sentinel-path", default=None,
+                    help="Path to write a JSON sentinel file after the ingest "
+                         "finishes. run-agent.sh reads this to decide whether "
+                         "to run the Sonnet Phase B (if new_trade_ids is "
+                         "non-empty).")
     args = ap.parse_args()
 
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -385,7 +391,20 @@ def main() -> int:
     years = compute_years_to_pull()
     print(f"[tracker] years to pull: {years}", file=sys.stderr)
 
+    # Snapshot the max trade_id BEFORE the run so we can identify new
+    # rows after. The daily agent consumes this via tracker_runs.new_trade_ids.
+    pre_max_trade_id = 0
+    try:
+        conn_pre = db.connect()
+        cur_pre = conn_pre.cursor()
+        cur_pre.execute("SELECT COALESCE(MAX(id), 0) FROM trades")
+        pre_max_trade_id = cur_pre.fetchone()[0] or 0
+        conn_pre.close()
+    except Exception as e:
+        print(f"[tracker] WARN: failed to snapshot max trade_id: {e}", file=sys.stderr)
+
     # ---- Run ingest for each year ----
+    run_start = datetime.utcnow().isoformat()
     overall_failure = None
     total_persisted = 0
     total_skipped = 0
@@ -426,6 +445,80 @@ def main() -> int:
                   file=sys.stderr)
             break  # Don't continue to other years on failure
 
+    # ---- Compute new trade IDs + distinct politician names ----
+    # Runs AFTER the ingest loop (whether success or failure) so we can
+    # record what landed in this run. Failed runs with 0 new trades
+    # still get a tracker_runs row for the audit trail.
+    new_trade_ids: List[int] = []
+    new_politician_names: List[str] = []
+    if not args.dry_run:
+        try:
+            conn_post = db.connect()
+            cur_post = conn_post.cursor()
+            cur_post.execute(
+                "SELECT id, politician_name FROM trades WHERE id > ? ORDER BY id ASC",
+                (pre_max_trade_id,),
+            )
+            rows = cur_post.fetchall()
+            new_trade_ids = [r["id"] for r in rows]
+            seen = set()
+            for r in rows:
+                name = r["politician_name"]
+                if name and name not in seen:
+                    seen.add(name)
+                    new_politician_names.append(name)
+            conn_post.close()
+        except Exception as e:
+            print(f"[tracker] WARN: failed to diff new trade ids: {e}",
+                  file=sys.stderr)
+
+    # ---- Write new_trade_ids sentinel file for the runner ----
+    # run-agent.sh reads this to decide whether to invoke the Sonnet
+    # Phase B (only runs if the sentinel file has ≥1 trade id).
+    if args.sentinel_path:
+        try:
+            from pathlib import Path as _Path
+            p = _Path(args.sentinel_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps({
+                "run_timestamp": run_start,
+                "new_trade_ids": new_trade_ids,
+                "new_politician_names": new_politician_names,
+                "trades_persisted": total_persisted,
+                "since_date": since,
+                "years": years,
+            }))
+            print(f"[tracker] wrote sentinel: {args.sentinel_path}"
+                  f" (new_trades={len(new_trade_ids)})", file=sys.stderr)
+        except Exception as e:
+            print(f"[tracker] WARN: failed to write sentinel: {e}",
+                  file=sys.stderr)
+
+    # ---- Persist tracker_runs row ----
+    if not args.dry_run:
+        try:
+            conn_log = db.connect()
+            db.insert_tracker_run(conn_log, {
+                "run_timestamp": run_start,
+                "completed_at": datetime.utcnow().isoformat(),
+                "source": args.source,
+                "year": years[0] if years else None,
+                "since_date": since,
+                "trades_persisted": total_persisted,
+                "placeholders_skipped": total_skipped,
+                "new_trade_ids": new_trade_ids,
+                "new_politician_names": new_politician_names,
+                "email_sent": False,       # set to True later by Phase B wrapper
+                "email_subject": None,
+                "phase_b_searches": 0,     # populated by Phase B if it runs
+                "exit_code": 1 if overall_failure else 0,
+                "failure_reason": (overall_failure[0] if overall_failure else None),
+            })
+            conn_log.close()
+        except Exception as e:
+            print(f"[tracker] WARN: failed to persist tracker_runs row: {e}",
+                  file=sys.stderr)
+
     # ---- Handle outcome ----
     if overall_failure:
         reason, exit_code, failed_year = overall_failure
@@ -450,9 +543,11 @@ def main() -> int:
 
         return 1
 
-    # Success path — silent per spec
+    # Success path — silent per spec.
+    # Phase B (tracker_phase_b.py) is invoked separately by the runner
+    # if the sentinel file indicates ≥1 new trade.
     print(f"[tracker] DONE — persisted={total_persisted} skipped={total_skipped} "
-          f"years={years}", file=sys.stderr)
+          f"new_trade_ids={len(new_trade_ids)} years={years}", file=sys.stderr)
     if args.dry_run:
         print("[tracker] (dry-run — nothing written to DB)", file=sys.stderr)
     return 0

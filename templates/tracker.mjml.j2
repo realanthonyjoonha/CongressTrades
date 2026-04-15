@@ -1,0 +1,41 @@
+{% extends "_shell.mjml.j2" %}
+{#
+  tracker.mjml.j2 — Tracker Phase B alert email.
+  Transactional, compact layout. Banner shows just the batch counts
+  (N new filings from M politicians). The body is the LLM's committee-
+  annotated filings list.
+#}
+
+{% block body %}
+
+    <!-- Top banner: batch summary -->
+    <mj-section background-color="#161b22" padding="16px 24px">
+      <mj-column>
+        <mj-text align="center" font-size="13px" color="#8b949e">
+          {% if counts.new_filings %}
+          <strong class="accent">{{ counts.new_filings }}</strong> new filings
+          {% endif %}
+          {% if counts.politicians %}
+          &nbsp;·&nbsp;
+          <strong class="accent">{{ counts.politicians }}</strong> politicians
+          {% endif %}
+          {% if counts.cache_miss %}
+          &nbsp;·&nbsp;
+          <span class="muted">{{ counts.cache_miss }} researched this run</span>
+          {% endif %}
+        </mj-text>
+      </mj-column>
+    </mj-section>
+
+    <!-- Main content -->
+    <mj-section background-color="#0d1117" padding="24px">
+      <mj-column>
+        <mj-text>
+          <div class="md-body">
+          {{ body_html | safe }}
+          </div>
+        </mj-text>
+      </mj-column>
+    </mj-section>
+
+{% endblock %}

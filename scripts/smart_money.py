@@ -198,6 +198,223 @@ def get_top_performers(
 
 
 # ---------------------------------------------------------------------------
+# Weekly roster update (Phase 2.4)
+# ---------------------------------------------------------------------------
+#
+# The Weekly Deep Research agent re-ranks the Top 5 every Sunday night.
+# If a non-Top-5 candidate has rec_avg_excess_pct at least MIN_CHALLENGE_MULT
+# times the weakest current Top 5 member's excess (default 1.20 = 20% better),
+# auto-apply the swap. Each change is logged to parameter_changelog for
+# auditability.
+
+# "Significantly better" threshold: new candidate must exceed incumbent's
+# recency-weighted excess by at least this multiplier to trigger a swap.
+MIN_CHALLENGE_MULT = 1.20
+
+
+def update_roster_if_needed(
+    conn,
+    challenge_mult: float = MIN_CHALLENGE_MULT,
+    dry_run: bool = False,
+) -> Dict:
+    """
+    Re-rank Top 5 Congressional Traders, compare to current cached roster,
+    and auto-apply changes if a challenger outperforms the weakest
+    incumbent by >= challenge_mult × their rec_avg_excess_pct.
+
+    Writes each change to parameter_changelog for audit. If any changes
+    are applied, also overwrites data/top_performers.json with the new
+    ranking so the next Daily Signal picks it up.
+
+    Returns dict:
+        {
+          "prior_top5": [{name, rec_avg_excess_pct, rec_hit_rate, rank}, ...],
+          "new_top5":   [...],
+          "swaps":      [{out_name, in_name, out_excess, in_excess, threshold_met}, ...],
+          "applied":    bool,
+          "threshold":  float,
+        }
+    """
+    # Load the CURRENT cached roster BEFORE recomputing
+    prior = _load_cache() or {}
+    prior_top5 = prior.get("top_performers") or []
+
+    # Force-refresh the ranking
+    new_top5 = compute_top_performers(conn, n=DEFAULT_TOP_N)
+
+    # Identify swaps: walk old vs new by name
+    prior_names = [p.get("name") for p in prior_top5]
+    new_names = [p.get("name") for p in new_top5]
+
+    # Build lookup of excess per politician for comparison
+    prior_excess = {p.get("name"): (p.get("rec_avg_excess_pct") or 0) for p in prior_top5}
+    new_excess = {p.get("name"): (p.get("rec_avg_excess_pct") or 0) for p in new_top5}
+
+    swaps: List[Dict] = []
+
+    for name in new_names:
+        if name in prior_names:
+            continue
+        # This politician is NEW in the top 5. Who did they displace?
+        displaced_candidates = [n for n in prior_names if n not in new_names]
+        if not displaced_candidates:
+            continue
+        # Pair in rank order: the first displaced gets the first promoted
+        # (both lists are rank-sorted). But let's be simpler and pair the
+        # displaced politician with the LOWEST prior excess to the
+        # promoted politician with the HIGHEST new excess.
+        out_name = displaced_candidates[0]  # conservative: just pick the first displacement
+        in_excess_val = new_excess.get(name) or 0
+        out_excess_val = prior_excess.get(out_name) or 0
+
+        # Threshold check: promoted must exceed displaced by challenge_mult
+        threshold_met = False
+        if out_excess_val == 0:
+            # Incumbent was 0% excess → any positive new candidate is a clear win
+            threshold_met = in_excess_val > 0.5  # must at least beat noise floor
+        else:
+            threshold_met = in_excess_val >= abs(out_excess_val) * challenge_mult
+
+        swaps.append({
+            "out_name": out_name,
+            "in_name": name,
+            "out_excess_pct": out_excess_val,
+            "in_excess_pct": in_excess_val,
+            "threshold_mult": challenge_mult,
+            "threshold_met": threshold_met,
+        })
+
+    # Apply if at least one swap met threshold
+    applied = False
+    if swaps and any(s["threshold_met"] for s in swaps) and not dry_run:
+        _save_cache(new_top5)
+        # Log each change to parameter_changelog
+        try:
+            cur = conn.cursor()
+            for s in swaps:
+                if not s["threshold_met"]:
+                    continue
+                cur.execute(
+                    """
+                    INSERT INTO parameter_changelog (
+                        timestamp, constant_name, old_value, new_value,
+                        rationale, approval_status
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        datetime.utcnow().isoformat(),
+                        f"top5_roster:{s['out_name']}->{s['in_name']}",
+                        s["out_excess_pct"],
+                        s["in_excess_pct"],
+                        (
+                            f"Roster swap: {s['out_name']} (rec_excess "
+                            f"{s['out_excess_pct']:+.2f}%) replaced by "
+                            f"{s['in_name']} (rec_excess "
+                            f"{s['in_excess_pct']:+.2f}%) — "
+                            f"challenger exceeded incumbent by "
+                            f">{challenge_mult:.0%} threshold."
+                        ),
+                        "auto-applied",
+                    ),
+                )
+            conn.commit()
+            applied = True
+        except Exception as e:
+            print(f"  [smart_money] failed to log roster change: {e}",
+                  file=sys.stderr)
+
+    return {
+        "prior_top5": prior_top5,
+        "new_top5": new_top5,
+        "swaps": swaps,
+        "applied": applied,
+        "threshold_mult": challenge_mult,
+    }
+
+
+def render_roster_update_section(result: Dict) -> str:
+    """
+    Render a markdown block describing the roster update result. Called by
+    the Weekly Deep Research agent's Phase A driver to append to the
+    research pack.
+    """
+    lines: List[str] = []
+    lines.append("## Roster Update — Top 5 Congressional Traders\n")
+
+    swaps = result.get("swaps") or []
+    applied = result.get("applied", False)
+    threshold = result.get("threshold_mult", MIN_CHALLENGE_MULT)
+
+    if not swaps:
+        lines.append(
+            "*No roster changes this week — the Top 5 roster is still current.*\n"
+        )
+        lines.append("Current Top 5:")
+        for i, p in enumerate(result.get("new_top5", []), 1):
+            excess = p.get("rec_avg_excess_pct")
+            hit = p.get("rec_hit_rate")
+            lines.append(
+                f"{i}. **{p.get('name')}** — "
+                f"{hit * 100:.0f}% hit / {excess:+.1f}% rec-wtd excess"
+                if hit is not None and excess is not None
+                else f"{i}. **{p.get('name')}**"
+            )
+        lines.append("")
+        return "\n".join(lines) + "\n"
+
+    # Some swaps detected — describe each
+    applied_count = sum(1 for s in swaps if s["threshold_met"])
+    nearmiss_count = sum(1 for s in swaps if not s["threshold_met"])
+
+    if applied:
+        lines.append(
+            f"**{applied_count} roster change(s) auto-applied** "
+            f"(threshold: challenger must beat incumbent by "
+            f"{(threshold - 1) * 100:.0f}%). "
+            f"Changes logged to `parameter_changelog`.\n"
+        )
+    else:
+        lines.append(
+            f"*{nearmiss_count} near-miss roster challenge(s) this week — "
+            f"none met the {(threshold - 1) * 100:.0f}% threshold for "
+            f"auto-promotion.*\n"
+        )
+
+    lines.append("### Changes evaluated\n")
+    lines.append("| Status | Out | Out excess | In | In excess | Δ |")
+    lines.append("|---|---|---|---|---|---|")
+    for s in swaps:
+        status = "APPLIED" if s["threshold_met"] else "near-miss"
+        delta = s["in_excess_pct"] - s["out_excess_pct"]
+        lines.append(
+            f"| {status} "
+            f"| {s['out_name']} "
+            f"| {s['out_excess_pct']:+.1f}% "
+            f"| {s['in_name']} "
+            f"| {s['in_excess_pct']:+.1f}% "
+            f"| {delta:+.1f} pts |"
+        )
+    lines.append("")
+
+    lines.append("### New Top 5 (effective immediately)\n")
+    for i, p in enumerate(result.get("new_top5", []), 1):
+        excess = p.get("rec_avg_excess_pct")
+        hit = p.get("rec_hit_rate")
+        marker = ""
+        if p.get("name") not in [x.get("name") for x in result.get("prior_top5", [])]:
+            marker = " **(new)**"
+        lines.append(
+            f"{i}. **{p.get('name')}**{marker} — "
+            f"{hit * 100:.0f}% hit / {excess:+.1f}% rec-wtd excess"
+            if hit is not None and excess is not None
+            else f"{i}. **{p.get('name')}**{marker}"
+        )
+    lines.append("")
+
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
 # Open-position tracking
 # ---------------------------------------------------------------------------
 

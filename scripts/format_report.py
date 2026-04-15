@@ -57,13 +57,18 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = BASE_DIR / "templates"
 
 # Subject-line patterns we can auto-parse for banner counts
-# "N STRONG / N BASE / N MODERATE / N SKIP"  (daily)
-# "N flagged, N% beat SPY, N STRONG"          (weekly)
+# "N STRONG / N BASE / N MODERATE / N SKIP"     (daily)
+# "N flagged, N% beat SPY, N STRONG"            (weekly)
+# "N new filings from M politicians (...)"      (tracker)
 _DAILY_SUBJECT_RE = re.compile(
     r"(\d+)\s+STRONG\s*/\s*(\d+)\s+BASE\s*/\s*(\d+)\s+MODERATE\s*/\s*(\d+)\s+SKIP"
 )
 _WEEKLY_SUBJECT_RE = re.compile(
     r"(\d+)\s+flagged[,\s]+(\d+%)\s+beat\s+SPY[,\s]+(\d+)\s+STRONG",
+    re.IGNORECASE,
+)
+_TRACKER_SUBJECT_RE = re.compile(
+    r"(\d+)\s+new\s+filings?\s+from\s+(\d+)\s+politicians?",
     re.IGNORECASE,
 )
 
@@ -121,6 +126,18 @@ def parse_weekly_counts(subject: str) -> Dict:
     }
 
 
+def parse_tracker_counts(subject: str) -> Dict:
+    """Extract new_filings/politicians counts from the tracker SUBJECT line."""
+    m = _TRACKER_SUBJECT_RE.search(subject or "")
+    if not m:
+        return {"new_filings": 0, "politicians": 0, "cache_miss": 0}
+    return {
+        "new_filings": int(m.group(1)),
+        "politicians": int(m.group(2)),
+        "cache_miss": 0,  # optionally populated via --count-cache-miss
+    }
+
+
 # ---------------------------------------------------------------------------
 # Main rendering pipeline
 # ---------------------------------------------------------------------------
@@ -165,6 +182,7 @@ def render_email(
         "daily": "Daily Signal",
         "weekly": "Weekly Deep Research",
         "deepdive": "Politician Deep-Dive",
+        "tracker": "Data Maintenance",
     }
     agent_label = agent_labels.get(template_name, "Signal Report")
 
@@ -174,6 +192,8 @@ def render_email(
             counts = parse_daily_counts(subject or "")
         elif template_name == "weekly":
             counts = parse_weekly_counts(subject or "")
+        elif template_name == "tracker":
+            counts = parse_tracker_counts(subject or "")
         else:
             counts = {}
 
@@ -296,7 +316,7 @@ def main() -> int:
     )
     ap.add_argument(
         "--template", default="daily",
-        choices=["daily", "weekly", "deepdive"],
+        choices=["daily", "weekly", "deepdive", "tracker"],
         help="Which MJML template to use (default: daily)",
     )
     ap.add_argument("--in", dest="input_file",
