@@ -1,0 +1,39 @@
+{% extends "_shell.mjml.j2" %}
+{#
+  daily.mjml.j2 — Daily Signal digest email.
+  Body strategy: one markdown-rendered section (no per-section splitting
+  yet — we rely on the shell's .md-body CSS to style h2/h3/lists/tables
+  consistently). If we want colored tier badges later, we'll switch to
+  section-aware templating where the driver extracts STRONG/BASE blocks
+  separately.
+#}
+
+{% block body %}
+
+    <!-- Top banner: tier counts -->
+    <mj-section background-color="#161b22" padding="16px 24px">
+      <mj-column>
+        <mj-text align="center" font-size="14px" color="#8b949e" padding-bottom="8px">
+          <span class="tier-badge tier-STRONG">{{ counts.STRONG | default(0) }} STRONG</span>
+          &nbsp;&nbsp;
+          <span class="tier-badge tier-BASE">{{ counts.BASE | default(0) }} BASE</span>
+          &nbsp;&nbsp;
+          <span class="tier-badge tier-MODERATE">{{ counts.MODERATE | default(0) }} MODERATE</span>
+          &nbsp;&nbsp;
+          <span class="tier-badge tier-SKIP">{{ counts.SKIP | default(0) }} SKIP</span>
+        </mj-text>
+      </mj-column>
+    </mj-section>
+
+    <!-- Main content -->
+    <mj-section background-color="#0d1117" padding="24px">
+      <mj-column>
+        <mj-text>
+          <div class="md-body">
+          {{ body_html | safe }}
+          </div>
+        </mj-text>
+      </mj-column>
+    </mj-section>
+
+{% endblock %}

@@ -1,0 +1,35 @@
+{% extends "_shell.mjml.j2" %}
+{#
+  deepdive.mjml.j2 — Politician Deep-Dive email.
+  Single-politician profile. Banner shows politician name + roster tier.
+#}
+
+{% block body %}
+
+    <!-- Top banner: politician identity -->
+    <mj-section background-color="#161b22" padding="16px 24px">
+      <mj-column>
+        <mj-text align="center" font-size="13px" color="#8b949e">
+          {% if politician_name %}
+          <strong class="accent">{{ politician_name }}</strong>
+          {% endif %}
+          {% if roster_tier %}
+          &nbsp;·&nbsp;
+          <span class="tier-badge tier-{{ roster_tier | upper }}">{{ roster_tier | upper }}</span>
+          {% endif %}
+        </mj-text>
+      </mj-column>
+    </mj-section>
+
+    <!-- Main content -->
+    <mj-section background-color="#0d1117" padding="24px">
+      <mj-column>
+        <mj-text>
+          <div class="md-body">
+          {{ body_html | safe }}
+          </div>
+        </mj-text>
+      </mj-column>
+    </mj-section>
+
+{% endblock %}

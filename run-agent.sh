@@ -147,8 +147,21 @@ case "$cmd" in
     fi
     echo "[deepdive] subject: $SUBJECT" | tee -a "$LOG"
 
-    # Strip the SUBJECT line before formatting (it shouldn't appear in the email body)
-    grep -v "^SUBJECT:" "$NARRATIVE" | python3 "$SCRIPTS_DIR/format_report.py" > "$REPORT"
+    # Strip LLM preamble + SUBJECT line + fenced JSON before formatting
+    python3 -c "
+import re, sys
+with open('$NARRATIVE') as f:
+    text = f.read()
+m = re.search(r'^SUBJECT:.*\n', text, flags=re.MULTILINE)
+if m:
+    text = text[m.end():]
+text = re.sub(r'\`\`\`json\s*\n\{.*?\}\s*\n\`\`\`', '', text, flags=re.DOTALL)
+sys.stdout.write(text)
+" | python3 "$SCRIPTS_DIR/format_report.py" \
+      --template deepdive \
+      --subject "$SUBJECT" \
+      --date-display "$DATE_DISPLAY" \
+      --politician "$POLITICIAN" > "$REPORT"
 
     if [ ! -s "$REPORT" ]; then
       echo "[deepdive] ERROR: HTML report empty after format_report.py" | tee -a "$LOG"
@@ -264,7 +277,10 @@ if m:
 # Strip fenced JSON block (internal machinery)
 text = re.sub(r'\`\`\`json\s*\n\{.*?\}\s*\n\`\`\`', '', text, flags=re.DOTALL)
 sys.stdout.write(text)
-" | python3 "$SCRIPTS_DIR/format_report.py" > "$REPORT"
+" | python3 "$SCRIPTS_DIR/format_report.py" \
+      --template daily \
+      --subject "$SUBJECT" \
+      --date-display "$DATE_DISPLAY_FMT" > "$REPORT"
     if [ ! -s "$REPORT" ]; then
       echo "[daily] ERROR: HTML report empty after format_report.py" | tee -a "$LOG"
       exit 1
@@ -364,7 +380,10 @@ if m:
     text = text[m.end():]
 text = re.sub(r'\`\`\`json\s*\n\{.*?\}\s*\n\`\`\`', '', text, flags=re.DOTALL)
 sys.stdout.write(text)
-" | python3 "$SCRIPTS_DIR/format_report.py" > "$REPORT"
+" | python3 "$SCRIPTS_DIR/format_report.py" \
+      --template weekly \
+      --subject "$SUBJECT" \
+      --date-display "$DATE_DISPLAY_FMT" > "$REPORT"
     if [ ! -s "$REPORT" ]; then
       echo "[weekly] ERROR: HTML report empty after format_report.py" | tee -a "$LOG"
       exit 1
