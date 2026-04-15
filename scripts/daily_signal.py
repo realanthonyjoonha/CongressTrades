@@ -231,6 +231,7 @@ def render_research_pack(
     selected_for_llm: List[Dict],
     lookback_days: int,
     today: str,
+    conn=None,
 ) -> str:
     """
     Assemble the markdown research pack the LLM Phase B reads.
@@ -275,13 +276,26 @@ def render_research_pack(
             lines.append(f"- {k}: {v}")
     lines.append("")
 
+    # ---- Smart Money Watchlist (Top 5 historical performers + open positions) ----
+    # Rendered on every run — even empty-disclosure days — because the open
+    # positions are always worth tracking independent of today's overnight
+    # ingest. Ranking is cached (7-day TTL); open positions fetched fresh.
+    if conn is not None:
+        try:
+            import smart_money
+            lines.append(smart_money.render_smart_money_section(conn, today=today))
+        except Exception as e:
+            lines.append(f"## Smart Money Watchlist\n\n"
+                         f"*Smart Money section skipped due to error: {e}*\n")
+
     if not scored:
         lines.append("\n## No trades to score\n")
         lines.append(
-            "No trades disclosed in the lookback window. The Daily Signal "
-            "agent ran cleanly with nothing to do. This is normal on holidays "
-            "or weekends, or if the Data Maintenance agent hasn't pulled new "
-            "data recently."
+            "No overnight trades disclosed in the lookback window. The Daily Signal "
+            "agent ran cleanly with nothing new to score today. This is normal on "
+            "holidays or weekends, or if the Data Maintenance agent hasn't pulled "
+            "new data recently. See the Smart Money Watchlist above for open-"
+            "position tracking independent of today's overnight batch."
         )
         return "\n".join(lines) + "\n"
 
@@ -732,7 +746,7 @@ def main() -> int:
 
     if not trades:
         # Still produce a research pack so the runner has something
-        pack = render_research_pack([], [], args.lookback, today)
+        pack = render_research_pack([], [], args.lookback, today, conn=conn)
         if args.out:
             out_path = Path(args.out)
             out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -761,7 +775,7 @@ def main() -> int:
     print(f"[daily-signal] selected {len(selected)} trades for LLM Phase B", file=sys.stderr)
 
     # ---- Render research pack ----
-    pack = render_research_pack(scored, selected, args.lookback, today)
+    pack = render_research_pack(scored, selected, args.lookback, today, conn=conn)
     if args.out:
         out_path = Path(args.out)
         out_path.parent.mkdir(parents=True, exist_ok=True)

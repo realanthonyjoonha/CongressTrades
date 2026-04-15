@@ -1,0 +1,60 @@
+{
+  "computed_at": "2026-04-14T22:23:45.755048Z",
+  "top_performers": [
+    {
+      "name": "Mark Green",
+      "hit_rate": 0.8695652173913043,
+      "avg_excess_pct": 9.416258566317717,
+      "rec_hit_rate": 0.8421052631578948,
+      "rec_avg_excess_pct": 8.026155478716463,
+      "wins": 20,
+      "rank": 1,
+      "n_aligned": 23,
+      "n_scored": 23
+    },
+    {
+      "name": "Kelly Louise Morrison",
+      "hit_rate": 0.8,
+      "avg_excess_pct": 7.4486342453935945,
+      "rec_hit_rate": 0.7999999999999999,
+      "rec_avg_excess_pct": 7.448634245393596,
+      "wins": 4,
+      "rank": 2,
+      "n_aligned": 5,
+      "n_scored": 5
+    },
+    {
+      "name": "Cindy Axne",
+      "hit_rate": 0.8,
+      "avg_excess_pct": 5.181120845357695,
+      "rec_hit_rate": 0.8750000000000001,
+      "rec_avg_excess_pct": 6.386640900502695,
+      "wins": 4,
+      "rank": 3,
+      "n_aligned": 5,
+      "n_scored": 5
+    },
+    {
+      "name": "Tim Moore",
+      "hit_rate": 0.5643564356435643,
+      "avg_excess_pct": 5.65375204214081,
+      "rec_hit_rate": 0.5580608793686583,
+      "rec_avg_excess_pct": 6.182874174137886,
+      "wins": 57,
+      "rank": 4,
+      "n_aligned": 110,
+      "n_scored": 101
+    },
+    {
+      "name": "Christopher Jacobs",
+      "hit_rate": 0.589041095890411,
+      "avg_excess_pct": 5.734031995678215,
+      "rec_hit_rate": 0.5827338129496398,
+      "rec_avg_excess_pct": 5.2165074689760305,
+      "wins": 43,
+      "rank": 5,
+      "n_aligned": 73,
+      "n_scored": 73
+    }
+  ]
+}
