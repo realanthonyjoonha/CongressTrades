@@ -1,19 +1,37 @@
 {% extends "_shell.mjml.j2" %}
 {#
   daily.mjml.j2 — Daily Signal digest email.
-  Body strategy: one markdown-rendered section (no per-section splitting
-  yet — we rely on the shell's .md-body CSS to style h2/h3/lists/tables
-  consistently). If we want colored tier badges later, we'll switch to
-  section-aware templating where the driver extracts STRONG/BASE blocks
-  separately.
+
+  Phase 2.4.1 enhancement: two-row dashboard strip at the top of the
+  email gives a 5-second scan of the day's signal state.
+    Row 1 — Tier counts (STRONG / BASE / MODERATE / SKIP pills)
+    Row 2 — Context chips from the dashboard-context sidecar:
+            * Since last daily: N new filings from M politicians (P tracker runs)
+            * Top 5 intraday: [politician] [ticker] [±%]
+            * Echo: [ticker] also flagged last week / held by Top 5
+            * Most actionable today: [tier] [ticker] [politician]
+
+  `dashboard` is a dict injected by format_report.py when the caller
+  passes `--context-sidecar`. Any of the four fields may be null/missing;
+  we gracefully skip those pills so the strip stays clean on quiet days.
+
+  Body strategy unchanged: single markdown-rendered region styled by
+  the shell's .md-body CSS.
 #}
+
+{% macro context_pill(label, value, color) %}
+  <span style="display:inline-block;background-color:#0d1117;border:1px solid #30363d;border-radius:10px;padding:4px 10px;margin:2px 4px;font-size:11px;color:#8b949e;letter-spacing:0.2px;">
+    <span style="color:{{ color }};font-weight:700;text-transform:uppercase;letter-spacing:0.4px;">{{ label }}</span>
+    &nbsp;<span style="color:#e6edf3;">{{ value }}</span>
+  </span>
+{% endmacro %}
 
 {% block body %}
 
-    <!-- Top banner: tier counts -->
-    <mj-section background-color="#161b22" padding="16px 24px">
+    <!-- Row 1: Tier counts -->
+    <mj-section background-color="#161b22" padding="16px 24px 8px 24px">
       <mj-column>
-        <mj-text align="center" font-size="14px" color="#8b949e" padding-bottom="8px">
+        <mj-text align="center" font-size="14px" color="#8b949e" padding-bottom="4px">
           <span class="tier-badge tier-STRONG">{{ counts.STRONG | default(0) }} STRONG</span>
           &nbsp;&nbsp;
           <span class="tier-badge tier-BASE">{{ counts.BASE | default(0) }} BASE</span>
@@ -24,6 +42,54 @@
         </mj-text>
       </mj-column>
     </mj-section>
+
+    <!-- Row 2: Dashboard context strip (Phase 2.4.1) -->
+    {% if dashboard and (dashboard.since_last_daily or dashboard.top5_intraday_best or dashboard.echo or dashboard.most_actionable) %}
+    <mj-section background-color="#161b22" padding="0 24px 16px 24px" border-bottom="1px solid #21262d">
+      <mj-column>
+        <mj-text align="center" font-size="11px" line-height="1.9" padding="0">
+          {% if dashboard.since_last_daily %}
+            {%- set s = dashboard.since_last_daily -%}
+            {{ context_pill(
+                'Since last daily',
+                s.new_filings ~ ' filing' ~ ('s' if s.new_filings != 1 else '') ~
+                ' · ' ~ s.distinct_politicians ~ ' pol' ~ ('s' if s.distinct_politicians != 1 else '') ~
+                ' · ' ~ s.tracker_runs ~ ' tracker run' ~ ('s' if s.tracker_runs != 1 else ''),
+                '#58a6ff'
+            ) }}
+          {% endif %}
+          {% if dashboard.top5_intraday_best %}
+            {%- set t = dashboard.top5_intraday_best -%}
+            {%- set pct = t.today_move_pct | round(1) -%}
+            {%- set move_color = '#238636' if pct >= 0 else '#f85149' -%}
+            {{ context_pill(
+                'Top 5 intraday',
+                t.politician ~ ' · ' ~ t.ticker ~ ' ' ~ ('+' if pct >= 0 else '') ~ pct|string ~ '%',
+                move_color
+            ) }}
+          {% endif %}
+          {% if dashboard.echo %}
+            {%- set e = dashboard.echo -%}
+            {%- set src_label = 'flagged last 7d' if e.source == 'recent_flagged' else 'held by Top 5' -%}
+            {{ context_pill(
+                'Echo',
+                e.ticker ~ ' · ' ~ src_label,
+                '#d2a8ff'
+            ) }}
+          {% endif %}
+          {% if dashboard.most_actionable %}
+            {%- set a = dashboard.most_actionable -%}
+            {%- set tier_color = '#3fb950' if a.tier == 'STRONG' else ('#58a6ff' if a.tier == 'BASE' else '#8b949e') -%}
+            {{ context_pill(
+                'Most actionable',
+                a.tier ~ ' · ' ~ a.ticker ~ ' (' ~ a.politician ~ ')',
+                tier_color
+            ) }}
+          {% endif %}
+        </mj-text>
+      </mj-column>
+    </mj-section>
+    {% endif %}
 
     <!-- Main content -->
     <mj-section background-color="#0d1117" padding="24px">

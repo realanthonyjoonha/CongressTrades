@@ -152,6 +152,7 @@ def render_email(
     counts: Optional[Dict] = None,
     preview_text: Optional[str] = None,
     charts_sidecar: Optional[str] = None,
+    context_sidecar: Optional[str] = None,
 ) -> str:
     """
     Render a narrative markdown document → production HTML email.
@@ -229,6 +230,20 @@ def render_email(
             print(f"[format_report] WARN: chart substitution failed: {e}",
                   file=sys.stderr)
 
+    # Load dashboard context sidecar (daily template uses this to render
+    # a visual "context strip" below the tier banner — saves the LLM from
+    # writing ~60 words of scan-level summary prose).
+    import json as _json
+    dashboard_ctx: Dict = {}
+    if context_sidecar:
+        try:
+            ctx_path = Path(context_sidecar)
+            if ctx_path.exists():
+                dashboard_ctx = _json.loads(ctx_path.read_text())
+        except Exception as e:
+            print(f"[format_report] WARN: context sidecar load failed: {e}",
+                  file=sys.stderr)
+
     # Convert markdown → HTML
     body_html = markdown_to_html(narrative_md)
 
@@ -258,6 +273,7 @@ def render_email(
         roster_tier=roster_tier,
         counts=counts,
         body_html=body_html,
+        dashboard=dashboard_ctx,
     )
 
     # Compile MJML → HTML
@@ -343,6 +359,11 @@ def main() -> int:
                          "(see scripts/charts.py ChartRegistry). Substitutes "
                          "<!--CHART:id--> placeholders in the narrative with "
                          "base64 image tags before rendering.")
+    ap.add_argument("--context-sidecar",
+                    help="Path to a dashboard-context JSON sidecar (daily "
+                         "template only). Written by scripts/daily_signal.py; "
+                         "consumed by templates/daily.mjml.j2 to render the "
+                         "visual context strip below the tier banner.")
     args = ap.parse_args()
 
     # Read narrative
@@ -368,6 +389,7 @@ def main() -> int:
             counts=counts,
             preview_text=args.preview_text,
             charts_sidecar=args.charts_sidecar,
+            context_sidecar=args.context_sidecar,
         )
     except Exception as e:
         print(f"[format_report] ERROR: render failed: {e}", file=sys.stderr)

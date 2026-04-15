@@ -371,7 +371,8 @@ sys.stdout.write(text)
       --template daily \
       --subject "$SUBJECT" \
       --date-display "$DATE_DISPLAY_FMT" \
-      --charts-sidecar "${PACK%.md}.charts.json" > "$REPORT"
+      --charts-sidecar "${PACK%.md}.charts.json" \
+      --context-sidecar "${PACK%.md}.context.json" > "$REPORT"
     if [ ! -s "$REPORT" ]; then
       echo "[daily] ERROR: HTML report empty after format_report.py" | tee -a "$LOG"
       exit 1

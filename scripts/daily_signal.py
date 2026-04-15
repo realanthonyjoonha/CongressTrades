@@ -47,6 +47,169 @@ DEFAULT_LLM_TRADE_CAP = 20  # Hard ceiling on trades sent to LLM Phase B
 
 
 # ---------------------------------------------------------------------------
+# Phase A → email-render bridge: dashboard context sidecar
+# ---------------------------------------------------------------------------
+#
+# The email template renders a visual dashboard strip below the tier-count
+# banner. This saves the LLM from having to write ~60 words of scan-level
+# summary prose ("3 tracker runs last night, Top 5 best mover is HOG +2.8%,
+# NVDA echo from Monday flagged list"). Instead Phase A computes these
+# four context chips deterministically and dumps them to a sidecar JSON
+# that format_report.py reads at email-render time.
+#
+# Schema:
+#   {
+#     "generated_at": "2026-04-15T12:34:56Z",
+#     "since_last_daily": {
+#         "tracker_runs": 3,
+#         "new_filings": 12,
+#         "distinct_politicians": 5
+#     },
+#     "top5_intraday_best": {
+#         "politician": "Tim Moore",
+#         "ticker": "HOG",
+#         "today_move_pct": 2.8
+#     },
+#     "echo": {
+#         "ticker": "NVDA",
+#         "source": "recent_flagged"   // or "top5_open_position"
+#     },
+#     "most_actionable": {
+#         "tier": "BASE",
+#         "ticker": "AMCR",
+#         "politician": "Thomas Kean"
+#     }
+#   }
+# Any field may be null if the signal isn't present.
+
+def compute_dashboard_context(
+    conn,
+    scored: List[Dict],
+    selected: List[Dict],
+) -> Dict:
+    """
+    Compute the 4 dashboard-strip chips from already-fetched Phase A data.
+    All computation is cheap (already-loaded data + one DB query for
+    recent flagged). Returns a JSON-serializable dict.
+    """
+    context: Dict = {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "since_last_daily": None,
+        "top5_intraday_best": None,
+        "echo": None,
+        "most_actionable": None,
+    }
+
+    # --- Chip 1: since last daily (tracker runs + filings) ---
+    try:
+        tracker_runs = db.get_tracker_runs_since(conn, hours=24, only_with_email=True)
+        if tracker_runs:
+            total_new = sum((r["trades_persisted"] or 0) for r in tracker_runs)
+            distinct_pols: set = set()
+            for r in tracker_runs:
+                names = r["new_politician_names"]
+                if not names:
+                    continue
+                try:
+                    distinct_pols.update(json.loads(names))
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            context["since_last_daily"] = {
+                "tracker_runs": len(tracker_runs),
+                "new_filings": total_new,
+                "distinct_politicians": len(distinct_pols),
+            }
+    except Exception as e:
+        print(f"  [dashboard] since_last_daily failed: {e}", file=sys.stderr)
+
+    # --- Chip 2: Top 5 intraday best mover ---
+    try:
+        import live_pnl
+        top5 = live_pnl.compute_top5_day_pnl(conn)
+        best = None
+        for p in top5:
+            pol_name = p.get("name")
+            for pos in p.get("positions", []):
+                move = pos.get("today_move_pct")
+                if move is None:
+                    continue
+                if best is None or abs(move) > abs(best["today_move_pct"]):
+                    best = {
+                        "politician": pol_name,
+                        "ticker": pos.get("ticker"),
+                        "today_move_pct": move,
+                    }
+        if best:
+            context["top5_intraday_best"] = best
+    except Exception as e:
+        print(f"  [dashboard] top5_intraday_best failed: {e}", file=sys.stderr)
+
+    # --- Chip 3: echo (today's overnight ticker = recent flagged OR Top 5 open position) ---
+    try:
+        today_tickers = {
+            (s.get("ticker") or "").upper()
+            for s in scored
+            if s.get("ticker")
+        }
+
+        # Recent flagged (last 7 days, STRONG/BASE)
+        recent = db.get_recommendations_since(conn, days=7, tiers=["STRONG", "BASE"])
+        recent_tickers = {(r["ticker"] or "").upper() for r in recent if r["ticker"]}
+
+        # Top 5 open positions
+        import smart_money
+        top5_meta = smart_money.get_top_performers(conn)
+        top5_tickers: set = set()
+        for p in top5_meta:
+            name = p.get("name")
+            if not name:
+                continue
+            for pos in smart_money.get_open_positions(conn, name):
+                t = (pos.get("ticker") or "").upper()
+                if t:
+                    top5_tickers.add(t)
+
+        # Overlap priority: recent_flagged > top5_open_position
+        echo_set_recent = today_tickers & recent_tickers
+        echo_set_top5 = today_tickers & top5_tickers
+        if echo_set_recent:
+            context["echo"] = {
+                "ticker": sorted(echo_set_recent)[0],
+                "source": "recent_flagged",
+            }
+        elif echo_set_top5:
+            context["echo"] = {
+                "ticker": sorted(echo_set_top5)[0],
+                "source": "top5_open_position",
+            }
+    except Exception as e:
+        print(f"  [dashboard] echo failed: {e}", file=sys.stderr)
+
+    # --- Chip 4: most actionable (highest-tier trade in the LLM selection) ---
+    try:
+        tier_rank = {"STRONG": 0, "BASE": 1, "MODERATE": 2, "SKIP": 99}
+        best_sel = None
+        best_rank = 999
+        for s in selected:
+            tier = s.get("tier_pre_stage3") or "SKIP"
+            r = tier_rank.get(tier, 99)
+            if r < best_rank:
+                best_rank = r
+                best_sel = s
+        if best_sel:
+            trade = best_sel.get("trade", {})
+            context["most_actionable"] = {
+                "tier": best_sel.get("tier_pre_stage3"),
+                "ticker": trade.get("ticker"),
+                "politician": trade.get("politician_name"),
+            }
+    except Exception as e:
+        print(f"  [dashboard] most_actionable failed: {e}", file=sys.stderr)
+
+    return context
+
+
+# ---------------------------------------------------------------------------
 # Phase A: fetch + score overnight trades
 # ---------------------------------------------------------------------------
 
@@ -888,6 +1051,17 @@ def main() -> int:
             print(f"[daily-signal] chart sidecar write failed: {e}",
                   file=sys.stderr)
 
+    def _save_dashboard_sidecar(pack_path: str, context: Dict) -> None:
+        """Write the dashboard-context sidecar next to the pack."""
+        sidecar_path = Path(pack_path).with_suffix(".context.json")
+        try:
+            sidecar_path.write_text(json.dumps(context, indent=2, default=str))
+            print(f"[daily-signal] wrote dashboard sidecar: {sidecar_path}",
+                  file=sys.stderr)
+        except Exception as e:
+            print(f"[daily-signal] dashboard sidecar write failed: {e}",
+                  file=sys.stderr)
+
     # ---- Fetch overnight trades ----
     trades = fetch_overnight(conn, lookback_days=args.lookback)
     print(f"[daily-signal] fetched {len(trades)} overnight trades "
@@ -899,12 +1073,16 @@ def main() -> int:
             [], [], args.lookback, today,
             conn=conn, chart_registry=chart_registry,
         )
+        # Empty-run dashboard context — only the "since last daily" chip
+        # might still have useful data from tracker runs.
+        empty_context = compute_dashboard_context(conn, [], [])
         if args.out:
             out_path = Path(args.out)
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(pack)
             print(f"[daily-signal] wrote research pack: {out_path} (empty run)", file=sys.stderr)
             _save_chart_sidecar(args.out)
+            _save_dashboard_sidecar(args.out, empty_context)
         else:
             sys.stdout.write(pack)
         backtest.save_price_cache()
@@ -932,6 +1110,12 @@ def main() -> int:
         scored, selected, args.lookback, today,
         conn=conn, chart_registry=chart_registry,
     )
+
+    # ---- Compute dashboard context (Phase 2.4.1 email enhancement) ----
+    # Four deterministic chips that the template renders at the top of
+    # the email, saving the LLM from writing ~60 words of scan prose.
+    dashboard_ctx = compute_dashboard_context(conn, scored, selected)
+
     if args.out:
         out_path = Path(args.out)
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -939,6 +1123,7 @@ def main() -> int:
         print(f"[daily-signal] wrote research pack: {out_path} ({len(pack):,} bytes)",
               file=sys.stderr)
         _save_chart_sidecar(args.out)
+        _save_dashboard_sidecar(args.out, dashboard_ctx)
     else:
         sys.stdout.write(pack)
 
